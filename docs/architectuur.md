@@ -2,79 +2,94 @@
 
 ## Doel
 
-Een webapplicatie waarmee rijschoolhouders examens voor hun leerlingen kunnen zoeken,
-reserveren en annuleren via de CBR Opleiders API.
+Een multi-tenant webapplicatie: iedere rijschool krijgt een eigen, afgeschermde omgeving waarin
+medewerkers leerlingen beheren en examens zoeken, reserveren en annuleren via de CBR Opleiders API.
+Wij (de exploitant) zijn de **Leverancier** richting het CBR; de rijscholen zijn tenants.
 
-## Gebouwd in deze eerste opzet
+## Multi-tenancy: hoe het werkt
 
-- Next.js 14 (App Router) + TypeScript, server-rendered met Server Actions.
-- Schermen: **Overzicht**, **Examen inplannen** (zoek op product/locatie/datum, reserveer voor een
-  leerling), **Reserveringen** (met annuleerregels), **Leerlingen** (machtigingsstatus).
-- `src/lib/cbr/` is de koppelingslaag:
+- **Aanmelden:** `/registreer` maakt een rijschool (tenant) plus een eerste gebruiker met rol
+  *eigenaar*. Inloggen via `/inloggen`.
+- **Rollen:** *eigenaar* (beheert o.a. het team) en *planner* (leerlingen en reserveringen).
+  Eigenaren voegen collega's toe op `/team`.
+- **Isolatie:** de tenant komt **altijd uit de server-side sessie**, nooit uit een formulier of URL.
+  Alle database-toegang gaat via `src/lib/repo.ts`, waar elke functie een `tenantId` verplicht
+  meekrijgt en elke query erop filtert. Een geraden id van een andere rijschool geeft dus "niet
+  gevonden" (getest in `src/lib/repo.test.ts` en end-to-end met twee rijscholen).
+- **CBR-client per tenant:** `getCbrClient(tenantId)`. De echte client gebruikt straks de CBR-gegevens
+  van die rijschool. Capaciteit is in de mock bewust gedeeld: een plek die rijschool A pakt, is weg voor B.
+- **Auditlog per tenant** (`/activiteit`): wie heeft wanneer welke reservering aangemaakt of geannuleerd.
+- **Inloggen:** wachtwoorden met scrypt, sessiecookie `httpOnly`/`sameSite=lax`/`secure` (productie),
+  sessietoken alleen gehasht in de database, rem op wachtwoord raden (5 pogingen per 15 min).
+
+## Schermen
+
+Overzicht · Examen inplannen (product/locatie/datum, reserveren voor een gemachtigde leerling) ·
+Reserveringen (met annuleerregels) · Leerlingen (toevoegen, machtiging) · Team · Activiteit.
+
+## Code-indeling
+
+- `src/lib/cbr/`: koppeling met het CBR
   - `client.ts`: de `CbrClient`-interface, het enige contract dat de UI kent.
-  - `mock.ts`: demo-implementatie zonder CBR-toegang (`CBR_MODE=mock`, standaard).
+  - `mock.ts`: demo-implementatie (`CBR_MODE=mock`, standaard).
   - `real.ts`: lege plaatshouder voor de echte API (`CBR_MODE=cbr`).
-  - `rules.ts` (+ tests): de CBR-reserveringsregels (28 dagen / 48 uur, geen verplaatsen).
-- Server-side validatie van annuleren (`actions.ts`); de uitgeschakelde knop is alleen een hint.
+  - `rules.ts` (+ tests): 28 dagen / 48 uur annuleren, geen verplaatsen/ruilen.
+- `src/lib/repo.ts`: alle tenant-gescopede database-queries. `src/lib/db.ts`: schema.
+- `src/lib/auth.ts`: wachtwoorden, sessies, `requireUser()`.
+- `src/app/*`: pagina's en server actions.
 
-## Wat bewust nog ontbreekt
+## Wat bewust nog ontbreekt of tijdelijk is
 
-| Onderdeel | Reden |
+| Onderdeel | Status / volgende stap |
 |---|---|
-| Echte CBR-koppeling | Spec en sleutel zijn pas beschikbaar na acceptatie als Leverancier |
-| Database | Mock-state zit in geheugen; leerlingen/gebruikers komen later in Postgres (EU) |
-| Inloggen | Zie hieronder |
-| Betaling/rekening-courant | Onbekend of de API dit ondersteunt |
+| Echte CBR-koppeling | Wacht op acceptatie als Leverancier en Developer Portal-spec |
+| Database | SQLite via `node:sqlite` (experimenteel in Node 22) voor het prototype. Productie: PostgreSQL in een EU-regio; alleen `db.ts`/`repo.ts` vervangen |
+| Zelf-registratie | Nu open voor iedereen. Productie: uitnodiging of goedkeuring, KvK-controle |
+| CBR-gegevens per rijschool | Hoe een rijschool zijn CBR-account aan ons koppelt is onbekend. Opslag **versleuteld** (verplicht volgens de voorwaarden), bijv. AES-256-GCM met sleutel uit een secret store |
+| Wachtwoord vergeten, e-mailverificatie, 2FA | Nog niet gebouwd; 2FA sterk aanbevolen voor eigenaren |
+| Rate limiting login | Nu in-memory per proces; productie: gedeelde store (Redis/DB) |
+| Tenant-routing | Nu via sessie. Optioneel later: subdomein per rijschool (`school.voorbeeld.nl`) |
+| Row-level security | Extra vangnet in Postgres (RLS op `tenant_id`) naast de code-filtering |
 
 ## Kernbeslissingen
 
-### 1. Wie is de "Leverancier"?
-Alleen een KvK-ingeschreven rechtspersoon kan de API-sleutel krijgen, en de sleutel is
-persoonlijk. Twee modellen:
-- **Multi-tenant SaaS (aanbevolen als je dit aan meerdere rijscholen aanbiedt):** jij bent Leverancier, elke
-  rijschool is een tenant. Eén sleutel, strikte tenant-scheiding in code en database.
-- **Eigen installatie per rijschool:** de rijschool is zelf Leverancier. Eenvoudiger juridisch,
-  maar meer beheer.
+### Eén Leverancier-sleutel, veel tenants
+De CBR-sleutel is persoonlijk en niet overdraagbaar of te delen "voor derden". Als SaaS-aanbieder
+moet je het CBR expliciet vragen of één Leverancier-sleutel voor meerdere rijscholen is toegestaan
+en hoe per rijschool wordt geautoriseerd. Dit is de belangrijkste juridische vraag voor deze opzet.
 
-### 2. Vast uitgaand IP-adres
-Het CBR accepteert alleen vooraf gedeelde IP's en **geen generieke cloud-ranges** (dus niet
-"zomaar" Vercel/Netlify/Lambda). Aanpak: draai de CBR-aanroepen vanaf een EU-VPS/host met een
-vast IP, of stuur uitgaand verkeer via een kleine egress-proxy met vast IP (`CBR_EGRESS_PROXY_URL`).
-Het frontend-gedeelte mag elders draaien; alleen de CBR-client hoeft achter het vaste IP. Vraag het CBR
-of jouw hostingprovider als "generieke cloud" geldt.
+### Vast uitgaand IP-adres
+Het CBR accepteert alleen vooraf gedeelde IP's, **geen generieke cloud-ranges**. Draai de
+CBR-aanroepen vanaf een EU-host met vast IP, of via een egress-proxy (`CBR_EGRESS_PROXY_URL`).
+Het frontend kan elders draaien. Vraag het CBR of jouw hostingprovider als "generieke cloud" geldt.
 
-### 3. Authenticatie van gebruikers
-Rijschoolhouders loggen in de app in; dat staat los van eHerkenning (dat is voor het CBR-portaal).
-Start met e-mail + wachtwoord met verplichte 2FA (of een EU-IdP), met rollen per rijschool
-(eigenaar, planner). Pas als bekend is hoe de API "namens de rijschool" werkt, bepaal je of
-eHerkenning ook in jouw app nodig is.
+### Privacy (AVG) en EER
+Alle persoonsgegevens blijven in de EER: EU-database, EU-e-mail, geen niet-EER-analytics of
+-foutmonitoring met persoonsgegevens. Alleen leerlingen met machtiging en alleen noodzakelijke
+velden (de app weigert reserveren voor niet-gemachtigde leerlingen). Verwerkersovereenkomst per
+rijschool nodig, want jullie verwerken namens hen.
 
-### 4. Privacy (AVG) en EER
-Persoonsgegevens blijven in de EER: EU-database, EU-e-mailprovider, geen niet-EER-analytics of
--foutmonitoring met persoonsgegevens. Verwerk alleen leerlingen met machtiging en alleen
-noodzakelijke velden. Maak een verwerkersovereenkomst met rijscholen.
+### Betrouwbaarheid
+- Zoekresultaten kort cachen; geen agressieve polling (voorwaarde "niet overbelasten", ook gedeeld over alle tenants!).
+- Toon wanneer het CBR niet beschikbaar is (dagelijks 24:00-06:00, zondag tot 13:00).
+- Bij `SLOT_TAKEN` direct alternatieven tonen.
 
-### 5. Betrouwbaarheid
-- Cache zoekresultaten kort; geen agressieve polling (voorwaarde "niet overbelasten").
-- Toon duidelijk wanneer de API dagelijks 24:00-06:00 / zondag tot 13:00 niet beschikbaar is.
-- Voor reserveren: idempotente aanvraag en bij `SLOT_TAKEN` direct een alternatief tonen.
-- Auditlog van alle reserveringen/annuleringen (wie, wanneer, welke leerling).
+## Roadmap
 
-## Voorgestelde roadmap
-
-1. **Nu:** toegang aanvragen (contactformulier + KvK-gegevens), vragen uit `api-overzicht.md` stellen.
-2. **Fase 1 (mock):** UI verfijnen met een planner, kalenderweergave, leerlingenbeheer in een database.
-3. **Fase 2:** accounts, rijscholen/tenants, rollen, auditlog, EU-hosting met vast IP.
-4. **Fase 3 (na acceptatie):** `RealCbrClient` implementeren tegen de Developer Portal-spec,
-   testen in sandbox, contracttests tegen de mock.
-5. **Fase 4:** wachtlijst/alerts voor vrijgekomen plekken (regel 3), herinneringen naar leerling
-   (EU-provider), meerdere instructeurs, daarna A/BE, beroeps en code 95 conform CBR-planning.
+1. **Nu:** toegang aanvragen bij het CBR en de open vragen uit `api-overzicht.md` stellen (zeker: meerdere rijscholen onder één Leverancier).
+2. **Fase 1 (gedaan):** multi-tenant prototype met mock.
+3. **Fase 2:** PostgreSQL (EU), uitnodigingsflow, wachtwoord vergeten, 2FA, EU-hosting met vast IP, CBR-gegevens per tenant versleuteld.
+4. **Fase 3 (na acceptatie):** `RealCbrClient` tegen de Developer Portal-spec, sandbox-tests, contracttests tegen de mock.
+5. **Fase 4:** wachtlijst/alerts voor vrijgekomen plekken, kalenderweergave, herinneringen naar leerlingen (EU-provider), A/BE/beroeps/code 95 conform CBR-planning.
 
 ## Lokaal draaien
 
 ```bash
 npm install
-npm run dev      # http://localhost:3000, demomodus
-npm test         # regels voor annuleren/verplaatsen
+npm run dev        # http://localhost:3000 → maak een rijschool aan via /registreer
+npm test           # annuleerregels + isolatie tussen rijscholen
 npm run typecheck
 ```
+
+Gegevens staan in `./data/app.db` (niet in git). Verwijder die map om opnieuw te beginnen.
+Vereist Node.js 22.13 of nieuwer (`node:sqlite`).

@@ -1,4 +1,6 @@
-import { getCbrClient, listCandidates } from "@/lib/cbr";
+import { requireUser } from "@/lib/auth";
+import { getCbrClient } from "@/lib/cbr";
+import { listCandidates, listReservations } from "@/lib/repo";
 import { CANCEL_REASON_TEXT, canCancel, freeCancelDeadline } from "@/lib/cbr/rules";
 import { PRODUCT_LABEL } from "@/lib/cbr/types";
 import { fmtDate, fmtDateTime } from "@/lib/format";
@@ -7,10 +9,10 @@ import { cancelAction } from "../actions";
 export const dynamic = "force-dynamic";
 
 export default async function Reserveringen({ searchParams }: { searchParams: { ok?: string; fout?: string } }) {
-  const client = getCbrClient();
-  const [reservations, locations, candidates] = await Promise.all([
-    client.listReservations(), client.listLocations(), listCandidates(),
-  ]);
+  const user = requireUser();
+  const reservations = listReservations(user.tenantId);
+  const locations = await getCbrClient(user.tenantId).listLocations();
+  const candidates = listCandidates(user.tenantId);
   const loc = Object.fromEntries(locations.map((l) => [l.id, l.name]));
   const cand = Object.fromEntries(candidates.map((c) => [c.id, c.name]));
   const now = new Date();

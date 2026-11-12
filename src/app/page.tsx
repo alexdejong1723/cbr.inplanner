@@ -1,18 +1,20 @@
 import Link from "next/link";
-import { getCbrClient } from "@/lib/cbr";
+import { requireUser } from "@/lib/auth";
+import { getTenant, listReservations } from "@/lib/repo";
 import { fmtDateTime } from "@/lib/format";
 import { PRODUCT_LABEL } from "@/lib/cbr/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const reservations = (await getCbrClient().listReservations()).filter(
-    (r) => r.status === "gereserveerd",
+  const user = requireUser();
+  const reservations = listReservations(user.tenantId).filter(
+    (r) => r.status === "gereserveerd" && new Date(r.startsAt) > new Date(),
   );
   const next = reservations[0];
   return (
     <>
-      <h1>Overzicht</h1>
+      <h1>Overzicht {getTenant(user.tenantId)?.name}</h1>
       <div className="grid">
         <div className="card">
           <div className="muted">Actieve reserveringen</div>

@@ -84,7 +84,7 @@ Leverancier. De rijschool zelf moet bij het CBR geregistreerd zijn.
 - Is er een **testomgeving/sandbox** met fictieve data?
 - Kunnen **beschikbare plekken** worden opgevraagd en op locatie/datum gefilterd, of alleen reserveren
   op een bekend aanbod? Is er een webhook/notificatie voor vrijgekomen plekken?
-- Hoe wordt **betaling** afgehandeld (rekening-courant)? Kan de API saldo lezen/opwaarderen?
+- Mag één Leverancier-sleutel meerdere rijscholen (tenants) bedienen, en hoe machtigt elke rijschool ons? Hoe wordt **betaling** afgehandeld (rekening-courant)? Kan de API saldo lezen/opwaarderen?
 - Wordt een kandidaat via API-aanroep of via de machtiging in het portaal gekoppeld?
 - Geldt het 28-dagen/48-uur-annuleerbeleid ook als API-validatie, of controleert de app dat zelf?
 - Planning en beschikbaarheid van A/BE/beroeps/code 95 in de API.

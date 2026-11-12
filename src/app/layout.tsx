@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getUser } from "@/lib/auth";
 import { isMock } from "@/lib/cbr";
+import { getTenant } from "@/lib/repo";
+import { logoutAction } from "./auth-actions";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -8,17 +11,33 @@ export const metadata: Metadata = {
   description: "Examens inplannen voor rijscholen via de CBR Opleiders API",
 };
 
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const user = getUser();
+  const tenant = user && getTenant(user.tenantId);
   return (
     <html lang="nl">
       <body>
         <header className="nav">
           <div className="in">
             <strong>CBR Inplanner</strong>
-            <Link href="/">Overzicht</Link>
-            <Link href="/plannen">Examen inplannen</Link>
-            <Link href="/reserveringen">Reserveringen</Link>
-            <Link href="/leerlingen">Leerlingen</Link>
+            {user ? (
+              <>
+                <Link href="/">Overzicht</Link>
+                <Link href="/plannen">Examen inplannen</Link>
+                <Link href="/reserveringen">Reserveringen</Link>
+                <Link href="/leerlingen">Leerlingen</Link>
+                {user.role === "eigenaar" && <Link href="/team">Team</Link>}
+                <Link href="/activiteit">Activiteit</Link>
+                <form action={logoutAction} className="inline">
+                  <span className="muted">{tenant?.name} · {user.name}</span>
+                  <button type="submit" className="danger">Uitloggen</button>
+                </form>
+              </>
+            ) : (
+              <Link href="/inloggen">Inloggen</Link>
+            )}
           </div>
         </header>
         <main>

@@ -1,11 +1,5 @@
 import { CbrError, type CbrClient } from "./client";
-import type {
-  AvailabilityQuery,
-  Candidate,
-  Location,
-  Reservation,
-  Slot,
-} from "./types";
+import type { AvailabilityQuery, Location, Reservation, Slot } from "./types";
 
 const LOCATIONS: Location[] = [
   { id: "ams", name: "CBR Amsterdam", city: "Amsterdam" },
@@ -14,21 +8,16 @@ const LOCATIONS: Location[] = [
   { id: "eht", name: "CBR Eindhoven", city: "Eindhoven" },
 ];
 
-export const MOCK_CANDIDATES: Candidate[] = [
-  { id: "c1", name: "Sanne Bakker", authorized: true },
-  { id: "c2", name: "Mohamed El Idrissi", authorized: true },
-  { id: "c3", name: "Lotte Visser", authorized: true },
-  { id: "c4", name: "Daan Smit", authorized: false },
-];
-
 interface Store {
+  /** Capaciteit is gedeeld: een plek die één rijschool pakt, is weg voor alle anderen. */
   taken: Set<string>;
-  reservations: Reservation[];
+  /** Per rijschool (opleider) de eigen reserveringen, zoals het CBR die zou bijhouden. */
+  byTenant: Map<string, Reservation[]>;
 }
 
 // Overleeft hot-reload in dev; vervangt later de echte CBR-state.
 const g = globalThis as unknown as { __cbrMock?: Store };
-const store: Store = (g.__cbrMock ??= { taken: new Set(), reservations: [] });
+const store: Store = (g.__cbrMock ??= { taken: new Set(), byTenant: new Map() });
 
 /** Deterministische sloten: werkdagen, 08:30-15:30, per locatie en product. */
 function generateSlots(q: AvailabilityQuery): Slot[] {
@@ -56,6 +45,14 @@ function generateSlots(q: AvailabilityQuery): Slot[] {
 }
 
 export class MockCbrClient implements CbrClient {
+  constructor(private readonly tenantId: string) {}
+
+  private get mine(): Reservation[] {
+    let list = store.byTenant.get(this.tenantId);
+    if (!list) store.byTenant.set(this.tenantId, (list = []));
+    return list;
+  }
+
   async listLocations() {
     return LOCATIONS;
   }
@@ -65,9 +62,6 @@ export class MockCbrClient implements CbrClient {
   }
 
   async reserve({ candidateId, slotId }: { candidateId: string; slotId: string }) {
-    const candidate = MOCK_CANDIDATES.find((c) => c.id === candidateId);
-    if (!candidate?.authorized)
-      throw new CbrError("NOT_AUTHORIZED", "Kandidaat heeft de rijschool niet gemachtigd.");
     if (store.taken.has(slotId))
       throw new CbrError("SLOT_TAKEN", "Deze plek is net door iemand anders gereserveerd.");
     const [product, locationId, startsAt] = slotId.split("|");
@@ -81,16 +75,16 @@ export class MockCbrClient implements CbrClient {
       purchasedAt: new Date().toISOString(),
       status: "gereserveerd",
     };
-    store.reservations.push(r);
+    this.mine.push(r);
     return r;
   }
 
   async listReservations() {
-    return [...store.reservations].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+    return [...this.mine].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   }
 
   async cancel(reservationId: string) {
-    const r = store.reservations.find((x) => x.id === reservationId);
+    const r = this.mine.find((x) => x.id === reservationId);
     if (!r) throw new CbrError("NOT_FOUND", "Reservering niet gevonden.");
     r.status = "geannuleerd";
     // Conform CBR-regel 3: vrijgekomen plek komt later terug; in de mock direct.

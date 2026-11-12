@@ -1,4 +1,6 @@
-import { getCbrClient, listCandidates } from "@/lib/cbr";
+import { requireUser } from "@/lib/auth";
+import { getCbrClient } from "@/lib/cbr";
+import { listCandidates } from "@/lib/repo";
 import { PRODUCT_LABEL, type Product } from "@/lib/cbr/types";
 import { fmtDateTime, isoDate } from "@/lib/format";
 import { reserveAction } from "../actions";
@@ -8,7 +10,8 @@ export const dynamic = "force-dynamic";
 type Params = { product?: Product; locatie?: string; vanaf?: string; fout?: string };
 
 export default async function Plannen({ searchParams }: { searchParams: Params }) {
-  const client = getCbrClient();
+  const user = requireUser();
+  const client = getCbrClient(user.tenantId);
   const today = new Date();
   const product = (searchParams.product ?? "B_PRAKTIJK") as Product;
   const locatie = searchParams.locatie || undefined;
@@ -17,7 +20,7 @@ export default async function Plannen({ searchParams }: { searchParams: Params }
 
   const [locations, candidates, slots] = await Promise.all([
     client.listLocations(),
-    listCandidates(),
+    Promise.resolve(listCandidates(user.tenantId)),
     client.findAvailability({ product, locationId: locatie, from: new Date(vanaf).toISOString(), to }),
   ]);
   const locName = Object.fromEntries(locations.map((l) => [l.id, l.name]));
