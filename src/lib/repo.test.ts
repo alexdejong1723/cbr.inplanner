@@ -44,3 +44,11 @@ test("auditlog en gebruikers zijn per rijschool gescheiden", () => {
   assert.ok(repo.listAudit(a.tenantId).length > 0);
   assert.ok(repo.listAudit(b.tenantId).every((r) => r.userName !== "Eigenaar a"));
 });
+
+test("opleidernummer is per rijschool en niet door een andere rijschool te wijzigen", () => {
+  repo.setOpleidernummer(a.tenantId, "12345");
+  assert.equal(repo.getTenant(a.tenantId)?.opleidernummer, "12345");
+  assert.equal(repo.getTenant(b.tenantId)?.opleidernummer, undefined);
+  repo.setOpleidernummer(a.tenantId, null);
+  assert.equal(repo.getTenant(a.tenantId)?.opleidernummer, undefined);
+});

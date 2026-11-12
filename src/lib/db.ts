@@ -145,6 +145,10 @@ CREATE TABLE authorizations (
 );
 CREATE INDEX idx_authorizations_tenant ON authorizations(tenant_id);
 `,
+// v5: CBR-opleidernummer per rijschool (nodig voor de uitleg aan leerlingen)
+`
+ALTER TABLE tenants ADD COLUMN opleidernummer TEXT;
+`,
 ];
 
 function migrate(d: DatabaseSync) {

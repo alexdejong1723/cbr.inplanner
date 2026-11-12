@@ -9,6 +9,7 @@ import { REASON_TEXT, usability, type UsabilityReason } from "@/lib/cbr/authoriz
 import { CbrError } from "@/lib/cbr/client";
 import { canCancel } from "@/lib/cbr/rules";
 import { AUTH_CATEGORY_LABEL, PRODUCT_LABEL, categoryForProduct, type AuthCategory, type Product } from "@/lib/cbr/types";
+import { normalizeOpleidernummer, opleidernummerProblem } from "@/lib/opleidernummer";
 import * as repo from "@/lib/repo";
 
 /** Alleen interne paden toestaan als terugverwijzing (voorkomt open redirects). */
@@ -129,4 +130,25 @@ export async function revokeManualAuthorizationAction(f: FormData) {
   }
   revalidatePath("/leerlingen");
   redirect("/leerlingen");
+}
+
+// ---------- Instellingen ----------
+
+export async function saveOpleidernummerAction(f: FormData) {
+  const user = requireUser();
+  const raw = String(f.get("opleidernummer") ?? "");
+  // Leeg laten mag: dan wordt het nummer gewist.
+  if (raw.trim() === "") {
+    repo.setOpleidernummer(user.tenantId, null);
+    repo.audit(user.tenantId, user.id, "instelling.opleidernummer", "gewist");
+    revalidatePath("/", "layout");
+    redirect("/instellingen?ok=Opleidernummer+gewist");
+  }
+  const value = normalizeOpleidernummer(raw);
+  const problem = opleidernummerProblem(value);
+  if (problem) redirect(withParam("/instellingen", "fout", problem));
+  repo.setOpleidernummer(user.tenantId, value);
+  repo.audit(user.tenantId, user.id, "instelling.opleidernummer", value);
+  revalidatePath("/", "layout");
+  redirect(withParam("/instellingen", "ok", "Opleidernummer opgeslagen."));
 }

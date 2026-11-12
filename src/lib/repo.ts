@@ -26,7 +26,7 @@ export interface UserWithHash extends User {
   emailVerified: boolean;
   tenantStatus: TenantStatus;
 }
-export interface Tenant { id: string; name: string; status: TenantStatus }
+export interface Tenant { id: string; name: string; status: TenantStatus; opleidernummer?: string }
 
 const toUser = (r: Row): User => ({
   id: r.id as string, tenantId: r.tenant_id as string, email: r.email as string,
@@ -78,8 +78,15 @@ export function getUserById(userId: string): User | undefined {
 }
 
 export function getTenant(tenantId: string): Tenant | undefined {
-  const r = one("SELECT id, name, status FROM tenants WHERE id = ?", tenantId);
-  return r && { id: r.id as string, name: r.name as string, status: r.status as TenantStatus };
+  const r = one("SELECT id, name, status, opleidernummer FROM tenants WHERE id = ?", tenantId);
+  return r && {
+    id: r.id as string, name: r.name as string, status: r.status as TenantStatus,
+    opleidernummer: (r.opleidernummer as string | null) ?? undefined,
+  };
+}
+
+export function setOpleidernummer(tenantId: string, value: string | null) {
+  run("UPDATE tenants SET opleidernummer = ? WHERE id = ?", value, tenantId);
 }
 
 // ---------- Sessies ----------

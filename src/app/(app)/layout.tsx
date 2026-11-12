@@ -22,6 +22,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Link href="/leerlingen">Leerlingen</Link>
                 {isMock() && <Link href="/demo-cbr">Demo: Mijn CBR</Link>}
                 <Link href="/activiteit">Activiteit</Link>
+                <Link href="/instellingen">Instellingen</Link>
                 <form action={logoutAction} className="inline">
                   <span className="muted">{tenant?.name} · {user.name}</span>
                   <button type="submit" className="danger">Uitloggen</button>

@@ -8,7 +8,7 @@ import { describe } from "@/lib/cbr/authorizations";
 import { getCbrClient, isMock } from "@/lib/cbr";
 import { AUTH_CATEGORY_LABEL, categoryForProduct } from "@/lib/cbr/types";
 import { fmtDateTime, isoDate } from "@/lib/format";
-import { listAuthorizations, listCandidates, listReservations } from "@/lib/repo";
+import { getTenant, listAuthorizations, listCandidates, listReservations } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +17,7 @@ export default async function Leerlingen({ searchParams }: { searchParams: { fou
   const listMode = getCbrClient(user.tenantId).supportsAuthorizationList;
   const sync = await syncAuthorizations(user.tenantId); // lazy: alleen als het overzicht verouderd is
   const today = new Date();
+  const opleidernummer = getTenant(user.tenantId)?.opleidernummer;
   const candidates = listCandidates(user.tenantId);
   const auths = listAuthorizations(user.tenantId);
   const activeReservations = listReservations(user.tenantId).filter((r) => r.status === "gereserveerd" && new Date(r.startsAt) > today);
@@ -34,10 +35,15 @@ export default async function Leerlingen({ searchParams }: { searchParams: { fou
         <strong>Hoe laat ik een leerling mij machtigen?</strong>
         <ol className="muted">
           <li>De leerling logt in op <em>Mijn CBR</em> (mijn.cbr.nl) met <strong>DigiD</strong> en kiest &ldquo;Opleider machtigen&rdquo;.</li>
-          <li>De leerling zoekt uw rijschool op met uw CBR-opleidernummer en kiest de examensoort (theorie en praktijk machtigt de leerling apart).</li>
+          <li>De leerling zoekt uw rijschool op met uw CBR-opleidernummer{opleidernummer ? <> (<strong>{opleidernummer}</strong>)</> : null} en kiest de examensoort (theorie en praktijk machtigt de leerling apart).</li>
           <li>De machtiging is 1 jaar geldig. U kunt alleen examens reserveren die vóór de einddatum vallen.</li>
         </ol>
         <p className="muted">Een e-mail van de leerling is geen machtiging: de machtiging moet bij het CBR staan.</p>
+        {opleidernummer ? (
+          <Link href="/machtigingsmail">Uitlegmail voor een leerling opstellen →</Link>
+        ) : (
+          <div className="banner">Vul uw <Link href="/instellingen">CBR-opleidernummer</Link> in: leerlingen hebben dat nodig om u te vinden, en het komt in de uitlegmail.</div>
+        )}
       </div>
 
       {listMode ? (

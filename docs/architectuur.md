@@ -67,7 +67,7 @@ Statussen van een rijschool: `pending` → `approved` / `rejected`; `approved` �
 ## Schermen
 
 Rijschool: Overzicht · Examen inplannen (product/locatie/datum, reserveren voor een gemachtigde leerling) ·
-Reserveringen (met annuleerregels) · Leerlingen en machtigingen · Activiteit · (alleen demo) Mijn CBR-simulatie.
+Reserveringen (met annuleerregels) · Leerlingen en machtigingen · Machtigingsmail · Activiteit · Instellingen (CBR-opleidernummer) · (alleen demo) Mijn CBR-simulatie.
 Publiek: Aanmelden · Inloggen · E-mail bevestigen · Verificatiemail opnieuw · Wachtwoord vergeten/resetten.
 Superadmin (`/admin`): rijscholen per status, goedkeuren, afwijzen met reden, schorsen, heractiveren.
 
@@ -105,6 +105,18 @@ CBR levert overzicht?  ja ──► machtigingen komen automatisch van het CBR (
 - **Aannames om te controleren bij het CBR:** (1) een praktijkmachtiging dekt ook herexamen en tussentijdse toets;
   (2) de einddatum is de laatste geldige dag; (3) of de nieuwe API het overzicht levert en of leerlingen na een
   reservering uit dat overzicht verdwijnen.
+- **Opleidernummer en uitlegmail:** een leerling vindt de rijschool in Mijn CBR met het CBR-opleidernummer. De rijschool
+  legt dat vast op `/instellingen` (per rijschool, gewist of gewijzigd wordt in de auditlog bijgehouden; het formaat van het nummer is
+  niet openbaar gedocumenteerd, dus we controleren alleen op 3 tot 20 letters/cijfers/spaties/streepjes). Op `/machtigingsmail` stelt de app
+  een uitlegmail op voor de leerling (stappen uit Mijn CBR, DigiD-waarschuwing, 1 jaar geldig, einddatumregel, bij praktijk
+  de papieren machtiging). De tekst staat in `src/lib/machtigingsmail.ts`; de stappen komen van de CBR-pagina "Opleider machtigen met DigiD"
+  (stand november 2026) en moeten opnieuw worden gecontroleerd als het CBR zijn schermen wijzigt.
+  **Bewust geen verzending door de app:** de tekst wordt in de browser opgesteld en de rijschoolhouder opent hem in het eigen
+  mailprogramma (`mailto:`) of kopieert hem. Redenen: een mail die vraagt om met DigiD in te loggen komt vertrouwder over van de eigen
+  afzender dan van een anoniem app-adres (phishingrisico), er worden geen e-mailadressen of namen van leerlingen opgeslagen of naar onze server
+  gestuurd (dataminimalisatie, AVG), en de app kan niet als spamkanaal worden misbruikt. Het e-mailadres in de `mailto:`-link wordt alleen
+  gebruikt als het een eenvoudig, veilig adres is. Willen we later toch zelf versturen, dan hebben we per leerling een e-mailadres,
+  een vaste tekst, een limiet per rijschool en een duidelijke afzender nodig.
 - **Het oude vinkje "gemachtigd" is vervangen** (migratie 4): het was een zelfverklaring zonder categorie of einddatum en
   wordt niet meegenomen; leerlingen en reserveringen blijven bestaan.
 - **Demo:** zonder CBR-toegang speelt `/demo-cbr` (alleen in `CBR_MODE=mock`) na wat een leerling in Mijn CBR doet.
