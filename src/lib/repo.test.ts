@@ -7,6 +7,9 @@ const repo = await import("./repo.ts");
 const mk = (n: string) =>
   repo.createTenantWithOwner({ tenantName: `School ${n}`, name: `Eigenaar ${n}`, email: `${n}@example.nl`, passwordHash: "x:y" });
 
+const addC = (tenantId: string, name: string) =>
+  repo.upsertManualAuthorization(tenantId, { name, birthDate: "2006-01-01", category: "B_PRAKTIJK", validUntil: "2027-12-31" }) as { ok: true; candidateId: string; authorizationId: string };
+
 const a = mk("a");
 const b = mk("b");
 
@@ -15,14 +18,17 @@ test("elke rijschool krijgt een eigen tenant", () => {
 });
 
 test("leerlingen zijn per rijschool gescheiden", () => {
-  const c = repo.addCandidate(a.tenantId, "Leerling van A", true);
+  const c = addC(a.tenantId, "Leerling van A");
   assert.equal(repo.listCandidates(a.tenantId).length, 1);
   assert.equal(repo.listCandidates(b.tenantId).length, 0);
-  assert.equal(repo.getCandidate(b.tenantId, c.id), undefined);
+  assert.equal(repo.getCandidate(b.tenantId, c.candidateId), undefined);
+  assert.equal(repo.listAuthorizations(b.tenantId).length, 0);
+  assert.equal(repo.getAuthorization(b.tenantId, c.candidateId, "B_PRAKTIJK"), undefined);
+  assert.equal(repo.getAuthorizationById(b.tenantId, c.authorizationId), undefined);
 });
 
 test("andere rijschool kan reservering niet zien of annuleren (IDOR)", () => {
-  const c = repo.addCandidate(a.tenantId, "Sanne", true);
+  const c = { id: addC(a.tenantId, "Sanne").candidateId };
   repo.insertReservation(a.tenantId, a.id, {
     id: "cbr-1", candidateId: c.id, product: "B_PRAKTIJK", locationId: "ams",
     startsAt: "2027-09-01T08:00:00Z", purchasedAt: "2027-05-01T08:00:00Z", status: "gereserveerd",

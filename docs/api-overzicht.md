@@ -68,7 +68,7 @@ Leverancier. De rijschool zelf moet bij het CBR geregistreerd zijn.
 | TLS-versies/ciphers volgens **NCSC** (goed/voldoende) | Moderne TLS-config, geen legacy clients |
 | Authenticatiegegevens van de rijschool **alleen versleuteld opslaan** | Secrets in vault / encrypted-at-rest |
 | Persoonsgegevens **niet buiten de EER** verwerken | EU-hosting, geen niet-EER-diensten (analytics, e-mail, logging!) |
-| Alleen kandidaten met **machtiging** aan de rijschool; alleen noodzakelijke data | Machtigingsvlag per leerling; dataminimalisatie |
+| Alleen kandidaten met **machtiging** aan de rijschool; alleen noodzakelijke data | Machtigingen per leerling en categorie, alleen kiesbaar met geldige machtiging (zie architectuur); dataminimalisatie |
 | Datalek melden aan **cert@cbr.nl binnen 48 uur** | Incidentproces |
 | **Niet overbelasten**: synchroniseren op vaste intervallen of via triggers | Caching, rate limiting, geen polling-lussen |
 | Beschikbaarheid niet gegarandeerd; **dagelijks 24:00-06:00 en zondag 24:00-13:00 niet beschikbaar** | UI moet dit netjes tonen, jobs plannen buiten die vensters |
@@ -85,6 +85,10 @@ Leverancier. De rijschool zelf moet bij het CBR geregistreerd zijn.
 - Kunnen **beschikbare plekken** worden opgevraagd en op locatie/datum gefilterd, of alleen reserveren
   op een bekend aanbod? Is er een webhook/notificatie voor vrijgekomen plekken?
 - Mag één Leverancier-sleutel meerdere rijscholen (tenants) bedienen, en hoe machtigt elke rijschool ons? Hoe wordt **betaling** afgehandeld (rekening-courant)? Kan de API saldo lezen/opwaarderen?
+- **Machtigingen:** geeft de API een lijst van gemachtigde kandidaten, met kandidaatnummer, naam, geboortedatum, categorie
+  en einddatum? Verdwijnt een leerling daaruit zodra een examen is gereserveerd (zoals in TOP internet) en komt hij
+  terug na annuleren of een afgekeurd examen? Dekt een praktijkmachtiging ook herexamen en tussentijdse toets? Is de
+  einddatum de laatste geldige dag? Hoe herkent de API een kandidaat bij het reserveren (kandidaatnummer of naam + geboortedatum)?
 - Wordt een kandidaat via API-aanroep of via de machtiging in het portaal gekoppeld?
 - Geldt het 28-dagen/48-uur-annuleerbeleid ook als API-validatie, of controleert de app dat zelf?
 - Planning en beschikbaarheid van A/BE/beroeps/code 95 in de API.

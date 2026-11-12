@@ -1,5 +1,7 @@
 import type {
   AvailabilityQuery,
+  CandidateIdentity,
+  CbrAuthorization,
   Location,
   Reservation,
   Slot,
@@ -16,9 +18,21 @@ import type {
  * wordt per opleider geïnstantieerd.
  */
 export interface CbrClient {
+  /**
+   * Levert het CBR een overzicht van de leerlingen die deze rijschool hebben gemachtigd?
+   * Zo ja: dat overzicht is leidend (zie listAuthorizations). Zo nee: de rijschool voert
+   * machtigingen handmatig in en het CBR controleert bij het reserveren.
+   */
+  readonly supportsAuthorizationList: boolean;
+  /** Gemachtigde leerlingen met categorie en einddatum. Alleen aanroepen als supportsAuthorizationList. */
+  listAuthorizations(): Promise<CbrAuthorization[]>;
   listLocations(): Promise<Location[]>;
   findAvailability(query: AvailabilityQuery): Promise<Slot[]>;
-  reserve(input: { candidateId: string; slotId: string }): Promise<Reservation>;
+  /**
+   * `candidateId` is ons eigen id en komt ongewijzigd terug in de Reservation;
+   * `candidate` is hoe het CBR de leerling herkent. Gooit NOT_AUTHORIZED als er geen geldige machtiging is.
+   */
+  reserve(input: { candidateId: string; candidate: CandidateIdentity; slotId: string }): Promise<Reservation>;
   listReservations(): Promise<Reservation[]>;
   cancel(reservationId: string): Promise<Reservation>;
 }
@@ -30,6 +44,7 @@ export class CbrError extends Error {
       | "NOT_FOUND"
       | "CANCEL_NOT_ALLOWED"
       | "NOT_AUTHORIZED"
+      | "UNSUPPORTED"
       | "UNAVAILABLE",
     message: string,
   ) {

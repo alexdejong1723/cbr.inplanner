@@ -8,7 +8,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "create-admin": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/create-superadmin.ts",
-    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test src/lib/cbr/rules.test.ts src/lib/repo.test.ts src/lib/auth-flow.test.ts"
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test src/lib/cbr/rules.test.ts src/lib/cbr/authorizations.test.ts src/lib/repo.test.ts src/lib/auth-flow.test.ts src/lib/authorization-repo.test.ts"
   },
   "dependencies": {
     "next": "14.2.35",

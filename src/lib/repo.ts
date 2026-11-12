@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { db } from "./db.ts";
-import type { Candidate, Product, Reservation } from "./cbr/types.ts";
+import type { StoredAuthorization } from "./cbr/authorizations.ts";
+import type { AuthCategory, Candidate, CandidateIdentity, CbrAuthorization, Product, Reservation } from "./cbr/types.ts";
 
 /**
  * ALLE toegang tot tenant-gegevens loopt via deze functies, en elke functie
@@ -217,7 +218,9 @@ export function insertOutbox(to: string, subject: string, body: string) {
 // ---------- Leerlingen ----------
 
 const toCandidate = (r: Row): Candidate => ({
-  id: r.id as string, name: r.name as string, authorized: r.authorized === 1,
+  id: r.id as string, name: r.name as string,
+  birthDate: (r.birth_date as string | null) ?? undefined,
+  cbrRef: (r.cbr_ref as string | null) ?? undefined,
 });
 
 export function listCandidates(tenantId: string): Candidate[] {
@@ -227,14 +230,128 @@ export function getCandidate(tenantId: string, id: string): Candidate | undefine
   const r = one("SELECT * FROM candidates WHERE tenant_id = ? AND id = ?", tenantId, id);
   return r && toCandidate(r);
 }
-export function addCandidate(tenantId: string, name: string, authorized: boolean): Candidate {
-  const id = randomUUID();
-  run("INSERT INTO candidates (id, tenant_id, name, authorized, created_at) VALUES (?,?,?,?,?)",
-    id, tenantId, name, authorized ? 1 : 0, now());
-  return { id, name, authorized };
+
+const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** Zoekt een leerling binnen deze rijschool op CBR-nummer, anders op naam + geboortedatum. */
+function findCandidate(tenantId: string, i: CandidateIdentity): Row | undefined {
+  if (i.cbrRef) {
+    const r = one("SELECT * FROM candidates WHERE tenant_id = ? AND cbr_ref = ?", tenantId, i.cbrRef);
+    if (r) return r;
+  }
+  if (!i.birthDate) return undefined;
+  return all("SELECT * FROM candidates WHERE tenant_id = ? AND birth_date = ?", tenantId, i.birthDate)
+    .find((r) => norm(r.name as string) === norm(i.name));
 }
-export function setCandidateAuthorized(tenantId: string, id: string, authorized: boolean) {
-  run("UPDATE candidates SET authorized = ? WHERE tenant_id = ? AND id = ?", authorized ? 1 : 0, tenantId, id);
+
+function upsertCandidate(tenantId: string, i: CandidateIdentity): string {
+  const existing = findCandidate(tenantId, i);
+  if (existing) {
+    // Vul ontbrekende gegevens aan (bijv. CBR-nummer van een eerder handmatig ingevoerde leerling).
+    if (!existing.cbr_ref && i.cbrRef) run("UPDATE candidates SET cbr_ref = ? WHERE id = ?", i.cbrRef, existing.id as string);
+    if (!existing.birth_date && i.birthDate) run("UPDATE candidates SET birth_date = ? WHERE id = ?", i.birthDate, existing.id as string);
+    return existing.id as string;
+  }
+  const id = randomUUID();
+  run("INSERT INTO candidates (id, tenant_id, name, birth_date, cbr_ref, created_at) VALUES (?,?,?,?,?,?)",
+    id, tenantId, i.name.trim(), i.birthDate ?? null, i.cbrRef ?? null, now());
+  return id;
+}
+
+// ---------- Machtigingen ----------
+
+const toAuth = (r: Row): StoredAuthorization => ({
+  id: r.id as string, candidateId: r.candidate_id as string, category: r.category as AuthCategory,
+  validUntil: r.valid_until as string, source: r.source as StoredAuthorization["source"],
+  status: r.status as StoredAuthorization["status"], verifiedAt: (r.verified_at as string | null) ?? null,
+});
+
+export function listAuthorizations(tenantId: string): StoredAuthorization[] {
+  return all("SELECT * FROM authorizations WHERE tenant_id = ? ORDER BY category", tenantId).map(toAuth);
+}
+export function getAuthorization(tenantId: string, candidateId: string, category: AuthCategory): StoredAuthorization | undefined {
+  const r = one("SELECT * FROM authorizations WHERE tenant_id = ? AND candidate_id = ? AND category = ?", tenantId, candidateId, category);
+  return r && toAuth(r);
+}
+export function getAuthorizationById(tenantId: string, id: string): StoredAuthorization | undefined {
+  const r = one("SELECT * FROM authorizations WHERE tenant_id = ? AND id = ?", tenantId, id);
+  return r && toAuth(r);
+}
+export function setAuthorizationStatus(tenantId: string, id: string, status: StoredAuthorization["status"]) {
+  run("UPDATE authorizations SET status = ? WHERE tenant_id = ? AND id = ?", status, tenantId, id);
+}
+export function getAuthorizationsSyncedAt(tenantId: string): string | null {
+  return (one("SELECT authorizations_synced_at AS t FROM tenants WHERE id = ?", tenantId)?.t as string | null) ?? null;
+}
+
+/**
+ * Verwerkt het overzicht van het CBR (leidend):
+ *  - machtigingen in de lijst worden aangemaakt of bijgewerkt en zijn weer 'actief';
+ *  - eerder door het CBR bevestigde machtigingen die NIET meer in de lijst staan worden
+ *    'niet_meer_zichtbaar'. Dat betekent niet per se ingetrokken: in TOP internet verdwijnt een
+ *    leerling ook uit de lijst zodra er een examen voor is aangevraagd.
+ * Handmatig ingevoerde machtigingen worden hier nooit aangeraakt, behalve dat het CBR ze kan bevestigen.
+ */
+export function applyCbrAuthorizations(tenantId: string, list: CbrAuthorization[]): string {
+  const at = now();
+  const d = db();
+  d.exec("BEGIN");
+  try {
+    const seen: string[] = [];
+    for (const a of list) {
+      const candidateId = upsertCandidate(tenantId, a);
+      const existing = getAuthorization(tenantId, candidateId, a.category);
+      if (existing) {
+        run("UPDATE authorizations SET source = 'cbr', status = 'actief', valid_until = ?, verified_at = ? WHERE id = ?", a.validUntil, at, existing.id);
+        seen.push(existing.id);
+      } else {
+        const id = randomUUID();
+        run("INSERT INTO authorizations (id, tenant_id, candidate_id, category, valid_until, source, status, verified_at, created_at) VALUES (?,?,?,?,?, 'cbr', 'actief', ?, ?)",
+          id, tenantId, candidateId, a.category, a.validUntil, at, at);
+        seen.push(id);
+      }
+    }
+    const gone = listAuthorizations(tenantId).filter((x) => x.source === "cbr" && x.status === "actief" && !seen.includes(x.id));
+    for (const x of gone) run("UPDATE authorizations SET status = 'niet_meer_zichtbaar' WHERE id = ?", x.id);
+    run("UPDATE tenants SET authorizations_synced_at = ? WHERE id = ?", at, tenantId);
+    d.exec("COMMIT");
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
+  return at;
+}
+
+export type ManualAuthResult =
+  | { ok: true; candidateId: string; authorizationId: string }
+  | { ok: false; reason: "bevestigd-door-cbr" };
+
+/** Terugvaloptie: de rijschool voert zelf een machtiging in (niet geverifieerd). */
+export function upsertManualAuthorization(
+  tenantId: string,
+  i: CandidateIdentity & { birthDate: string; category: AuthCategory; validUntil: string },
+): ManualAuthResult {
+  const d = db();
+  d.exec("BEGIN");
+  try {
+    const candidateId = upsertCandidate(tenantId, i);
+    const existing = getAuthorization(tenantId, candidateId, i.category);
+    let id: string;
+    if (existing) {
+      if (existing.source === "cbr" && existing.status === "actief") { d.exec("ROLLBACK"); return { ok: false, reason: "bevestigd-door-cbr" }; }
+      run("UPDATE authorizations SET source = 'handmatig', status = 'actief', valid_until = ?, verified_at = NULL WHERE id = ?", i.validUntil, existing.id);
+      id = existing.id;
+    } else {
+      id = randomUUID();
+      run("INSERT INTO authorizations (id, tenant_id, candidate_id, category, valid_until, source, status, verified_at, created_at) VALUES (?,?,?,?,?, 'handmatig', 'actief', NULL, ?)",
+        id, tenantId, candidateId, i.category, i.validUntil, now());
+    }
+    d.exec("COMMIT");
+    return { ok: true, candidateId, authorizationId: id };
+  } catch (e) {
+    d.exec("ROLLBACK");
+    throw e;
+  }
 }
 
 // ---------- Reserveringen ----------

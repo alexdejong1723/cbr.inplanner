@@ -43,14 +43,41 @@ export interface Reservation {
   status: ReservationStatus;
 }
 
+/**
+ * Een machtiging geeft de leerling per categorie aan de rijschool, via Mijn CBR (DigiD) of
+ * schriftelijk. Het CBR kent categorieën per examensoort; voor B nemen we aan dat een
+ * machtiging voor "praktijk" ook herexamen en tussentijdse toets dekt. Controleer dit bij het CBR.
+ */
+export type AuthCategory = "B_THEORIE" | "B_PRAKTIJK";
+
+export const AUTH_CATEGORY_LABEL: Record<AuthCategory, string> = {
+  B_THEORIE: "Theorie B",
+  B_PRAKTIJK: "Praktijk B",
+};
+
+export const categoryForProduct = (p: Product): AuthCategory =>
+  p === "B_THEORIE" ? "B_THEORIE" : "B_PRAKTIJK";
+
+/** Zo identificeert de rijschool een leerling richting het CBR. */
+export interface CandidateIdentity {
+  cbrRef?: string; // CBR-kandidaatnummer, indien bekend
+  name: string;
+  birthDate?: string; // YYYY-MM-DD
+}
+
+/** Een machtiging zoals het CBR die teruggeeft (of zoals de rijschool die handmatig invoert). */
+export interface CbrAuthorization extends CandidateIdentity {
+  birthDate: string;
+  category: AuthCategory;
+  validUntil: string; // YYYY-MM-DD, een machtiging is 1 jaar geldig
+}
+
 /** Leerling van de rijschool. Wordt in een eigen database beheerd, niet bij het CBR. */
 export interface Candidate {
   id: string;
   name: string;
-  /** Alleen bij echte koppeling: het CBR-kandidaat-/aanvraagnummer. */
-  cbrReference?: string;
-  /** Heeft de kandidaat de rijschool gemachtigd? Zonder machtiging mag je niets verwerken. */
-  authorized: boolean;
+  birthDate?: string;
+  cbrRef?: string;
 }
 
 export interface AvailabilityQuery {

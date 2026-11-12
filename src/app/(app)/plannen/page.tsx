@@ -1,35 +1,56 @@
-import { requireUser } from "@/lib/auth";
-import { getCbrClient } from "@/lib/cbr";
-import { listCandidates } from "@/lib/repo";
-import { PRODUCT_LABEL, type Product } from "@/lib/cbr/types";
-import { fmtDateTime, isoDate } from "@/lib/format";
+import Link from "next/link";
 import { reserveAction } from "@/app/actions";
+import { requireUser } from "@/lib/auth";
+import { syncAuthorizations } from "@/lib/authorization-sync";
+import { getCbrClient } from "@/lib/cbr";
+import { eligibleCandidateIds } from "@/lib/cbr/authorizations";
+import { AUTH_CATEGORY_LABEL, PRODUCT_LABEL, categoryForProduct, type Product } from "@/lib/cbr/types";
+import { fmtDateTime, isoDate } from "@/lib/format";
+import { listAuthorizations, listCandidates } from "@/lib/repo";
 
 export const dynamic = "force-dynamic";
 
-type Params = { product?: Product; locatie?: string; vanaf?: string; fout?: string };
+type Params = { product?: string; locatie?: string; vanaf?: string; fout?: string };
 
 export default async function Plannen({ searchParams }: { searchParams: Params }) {
   const user = requireUser();
   const client = getCbrClient(user.tenantId);
   const today = new Date();
-  const product = (searchParams.product ?? "B_PRAKTIJK") as Product;
+  const product = (searchParams.product && searchParams.product in PRODUCT_LABEL ? searchParams.product : "B_PRAKTIJK") as Product;
   const locatie = searchParams.locatie || undefined;
   const vanaf = searchParams.vanaf || isoDate(new Date(today.getTime() + 7 * 86_400_000));
   const to = new Date(new Date(vanaf).getTime() + 14 * 86_400_000).toISOString();
 
-  const [locations, candidates, slots] = await Promise.all([
+  // Zorg dat het overzicht van gemachtigde leerlingen vers genoeg is (alleen als het CBR dat levert).
+  const sync = await syncAuthorizations(user.tenantId);
+  const listMode = client.supportsAuthorizationList;
+
+  const [locations, slots] = await Promise.all([
     client.listLocations(),
-    Promise.resolve(listCandidates(user.tenantId)),
     client.findAvailability({ product, locationId: locatie, from: new Date(vanaf).toISOString(), to }),
   ]);
+  const candidates = listCandidates(user.tenantId);
+  const auths = listAuthorizations(user.tenantId);
   const locName = Object.fromEntries(locations.map((l) => [l.id, l.name]));
   const back = `/plannen?product=${product}&locatie=${locatie ?? ""}&vanaf=${vanaf}`;
+  const category = AUTH_CATEGORY_LABEL[categoryForProduct(product)];
+
+  // Per examenmoment: alleen leerlingen met een geldige machtiging voor deze examensoort die dan nog loopt.
+  const eligibleNow = eligibleCandidateIds(auths, product, new Date(vanaf).toISOString(), { listMode, today });
 
   return (
     <>
       <h1>Examen inplannen</h1>
       {searchParams.fout && <div className="banner">{searchParams.fout}</div>}
+      {sync.status === "fout" && (
+        <div className="banner">Het CBR is nu niet bereikbaar; de lijst met gemachtigde leerlingen kan verouderd zijn.</div>
+      )}
+      {!listMode && (
+        <div className="banner">
+          Het CBR levert geen overzicht van machtigingen. U kiest uit leerlingen waarvan u de machtiging zelf heeft ingevoerd;
+          het CBR controleert bij het reserveren.
+        </div>
+      )}
       <form className="card filters" method="get">
         <label>Product
           <select name="product" defaultValue={product}>
@@ -48,28 +69,42 @@ export default async function Plannen({ searchParams }: { searchParams: Params }
         <button type="submit">Zoeken</button>
       </form>
 
+      <p className="muted">
+        {eligibleNow.size === 0
+          ? <>Geen leerlingen met een geldige machtiging voor <strong>{category}</strong>. <Link href="/leerlingen">Bekijk machtigingen</Link>.</>
+          : <>{eligibleNow.size} {eligibleNow.size === 1 ? "leerling" : "leerlingen"} met een geldige machtiging voor <strong>{category}</strong>.</>}
+      </p>
+
       <div className="card table-wrap">
         {slots.length === 0 ? <p>Geen beschikbare plekken gevonden. Er komen op wisselende momenten plekken vrij.</p> : (
           <table>
             <thead><tr><th>Moment</th><th>Locatie</th><th>Reserveren voor</th></tr></thead>
             <tbody>
-              {slots.map((s) => (
-                <tr key={s.id}>
-                  <td>{fmtDateTime(s.startsAt)}</td>
-                  <td>{locName[s.locationId]}</td>
-                  <td>
-                    <form action={reserveAction} className="inline">
-                      <input type="hidden" name="slotId" value={s.id} />
-                      <input type="hidden" name="back" value={back} />
-                      <select name="candidateId" defaultValue="" aria-label="Leerling">
-                        <option value="" disabled>Kies leerling…</option>
-                        {candidates.filter((c) => c.authorized).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                      <button type="submit">Reserveer</button>
-                    </form>
-                  </td>
-                </tr>
-              ))}
+              {slots.map((s) => {
+                const ids = eligibleCandidateIds(auths, product, s.startsAt, { listMode, today });
+                const options = candidates.filter((c) => ids.has(c.id));
+                return (
+                  <tr key={s.id}>
+                    <td>{fmtDateTime(s.startsAt)}</td>
+                    <td>{locName[s.locationId]}</td>
+                    <td>
+                      {options.length === 0 ? (
+                        <span className="muted">Geen gemachtigde leerling voor dit moment</span>
+                      ) : (
+                        <form action={reserveAction} className="inline">
+                          <input type="hidden" name="slotId" value={s.id} />
+                          <input type="hidden" name="back" value={back} />
+                          <select name="candidateId" defaultValue="" aria-label="Leerling">
+                            <option value="" disabled>Kies leerling…</option>
+                            {options.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                          <button type="submit">Reserveer</button>
+                        </form>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

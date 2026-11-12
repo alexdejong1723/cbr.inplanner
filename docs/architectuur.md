@@ -67,9 +67,49 @@ Statussen van een rijschool: `pending` → `approved` / `rejected`; `approved` �
 ## Schermen
 
 Rijschool: Overzicht · Examen inplannen (product/locatie/datum, reserveren voor een gemachtigde leerling) ·
-Reserveringen (met annuleerregels) · Leerlingen (toevoegen, machtiging) · Activiteit.
+Reserveringen (met annuleerregels) · Leerlingen en machtigingen · Activiteit · (alleen demo) Mijn CBR-simulatie.
 Publiek: Aanmelden · Inloggen · E-mail bevestigen · Verificatiemail opnieuw · Wachtwoord vergeten/resetten.
 Superadmin (`/admin`): rijscholen per status, goedkeuren, afwijzen met reden, schorsen, heractiveren.
+
+## Machtigingen: reserveren alleen voor gemachtigde leerlingen
+
+Een leerling machtigt de rijschool zelf bij het CBR (Mijn CBR met DigiD, of schriftelijk met ID-kopie), **per
+categorie** (theorie en praktijk apart) en **1 jaar geldig**. Een e-mail van de leerling is geen machtiging en onze
+app kan DigiD niet vervangen. De app doet daarom drie dingen: de machtigingen van het CBR overnemen, alleen
+leerlingen met een geldige machtiging laten kiezen, en als het CBR geen overzicht levert een gecontroleerde terugval bieden.
+
+```
+CBR levert overzicht?  ja ──► machtigingen komen automatisch van het CBR (leidend)
+                       nee ─► rijschool voert ze handmatig in ("niet geverifieerd"); het CBR controleert bij reserveren
+```
+
+- **Keuzelijst bij het inplannen:** per examenmoment alleen leerlingen met een *actieve* machtiging voor de categorie
+  van het product (herexamen en tussentijdse toets vallen onder praktijk) waarvan de einddatum niet vóór het examen ligt.
+  De server controleert dit opnieuw bij het reserveren (`reserveAction`); het CBR blijft leidend.
+- **Model:** tabel `authorizations` (per leerling + categorie): `valid_until`, `source` (`cbr`|`handmatig`) en `status`
+  (`actief`, `niet_meer_zichtbaar`, `geweigerd`, `ingetrokken`). Leerlingen hebben geboortedatum en optioneel
+  CBR-kandidaatnummer (nodig om ze richting het CBR te herkennen).
+- **Overzicht van het CBR (`CbrClient.supportsAuthorizationList`):** `src/lib/authorization-sync.ts` haalt het op
+  en verwerkt het in één transactie. *Lazy*: bij openen van Plannen/Leerlingen alleen als het overzicht ouder is dan
+  `AUTH_SYNC_TTL_MS` (5 min); de knop "Vernieuwen" en de sync na een reservering mogen vaker, maar nooit vaker dan
+  `AUTH_SYNC_MIN_INTERVAL_MS` (15 s), i.v.m. de eis het reserveringssysteem niet te overbelasten. Bij een fout (bijv. 's nachts) blijft het laatst bekende
+  overzicht staan. Handmatig ingevoerde machtigingen tellen dan niet meer mee, een handmatige die het CBR bevestigt wordt `cbr`.
+- **Verdwijnen uit de lijst is niet hetzelfde als intrekken.** In TOP internet verdwijnt een leerling uit het
+  machtigingenscherm zodra er een examen is aangevraagd en komt hij terug na een afgekeurd examen. Daarom wordt een
+  verdwenen machtiging `niet_meer_zichtbaar` en toont de UI "Examen gereserveerd" (geen alarm) als er een lopende
+  reservering is, anders een waarschuwing. Na annuleren verschijnt de leerling weer in de lijst. Dit gedrag is
+  overgenomen uit een oude handleiding en **niet bevestigd** voor de nieuwe API; beide uitkomsten worden verwerkt.
+- **Terugval (handmatig):** naam, geboortedatum, optioneel kandidaatnummer, categorie, einddatum en een bevestiging dat de
+  machtiging gecontroleerd is. Wijst het CBR de reservering af (`NOT_AUTHORIZED`), dan wordt de machtiging `geweigerd` en
+  krijgt de gebruiker een duidelijke melding; de rijschool kan hem opnieuw invoeren nadat de leerling alsnog machtigt.
+- **Aannames om te controleren bij het CBR:** (1) een praktijkmachtiging dekt ook herexamen en tussentijdse toets;
+  (2) de einddatum is de laatste geldige dag; (3) of de nieuwe API het overzicht levert en of leerlingen na een
+  reservering uit dat overzicht verdwijnen.
+- **Het oude vinkje "gemachtigd" is vervangen** (migratie 4): het was een zelfverklaring zonder categorie of einddatum en
+  wordt niet meegenomen; leerlingen en reserveringen blijven bestaan.
+- **Demo:** zonder CBR-toegang speelt `/demo-cbr` (alleen in `CBR_MODE=mock`) na wat een leerling in Mijn CBR doet.
+  `CBR_MOCK_AUTH_LIST=off` simuleert een API zonder overzicht, om de terugval te testen. De mock-CBR controleert bij
+  reserveren zelf de machtiging, onafhankelijk van wat de rijschool invoert.
 
 ## Code-indeling
 
@@ -78,6 +118,8 @@ Superadmin (`/admin`): rijscholen per status, goedkeuren, afwijzen met reden, sc
   - `mock.ts`: demo-implementatie (`CBR_MODE=mock`, standaard).
   - `real.ts`: lege plaatshouder voor de echte API (`CBR_MODE=cbr`).
   - `rules.ts` (+ tests): 28 dagen / 48 uur annuleren, geen verplaatsen/ruilen.
+  - `authorizations.ts` (+ tests): wanneer een machtiging bruikbaar is, wie er te kiezen is, statusteksten.
+- `src/lib/authorization-sync.ts`: overzicht van gemachtigde leerlingen ophalen en opslaan.
 - `src/lib/repo.ts`: alle tenant-gescopede database-queries. `src/lib/db.ts`: schema.
 - `src/lib/auth.ts`: sessies, `requireUser()`. `src/lib/password.ts`: scrypt. `src/lib/ratelimit.ts`: limiter.
 - `src/lib/admin-auth.ts`: superadmin-sessies. `src/lib/mail.ts`: e-mail (SMTP/outbox) en mailteksten.

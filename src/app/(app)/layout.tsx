@@ -20,6 +20,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Link href="/plannen">Examen inplannen</Link>
                 <Link href="/reserveringen">Reserveringen</Link>
                 <Link href="/leerlingen">Leerlingen</Link>
+                {isMock() && <Link href="/demo-cbr">Demo: Mijn CBR</Link>}
                 <Link href="/activiteit">Activiteit</Link>
                 <form action={logoutAction} className="inline">
                   <span className="muted">{tenant?.name} · {user.name}</span>

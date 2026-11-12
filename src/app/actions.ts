@@ -3,9 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { syncAuthorizations } from "@/lib/authorization-sync";
 import { getCbrClient } from "@/lib/cbr";
+import { REASON_TEXT, usability, type UsabilityReason } from "@/lib/cbr/authorizations";
 import { CbrError } from "@/lib/cbr/client";
 import { canCancel } from "@/lib/cbr/rules";
+import { AUTH_CATEGORY_LABEL, PRODUCT_LABEL, categoryForProduct, type AuthCategory, type Product } from "@/lib/cbr/types";
 import * as repo from "@/lib/repo";
 
 /** Alleen interne paden toestaan als terugverwijzing (voorkomt open redirects). */
@@ -18,20 +21,44 @@ export async function reserveAction(formData: FormData) {
   const candidateId = String(formData.get("candidateId") ?? "");
   const slotId = String(formData.get("slotId") ?? "");
   const back = safeBack(String(formData.get("back") ?? "/plannen"));
+  const fail = (m: string): never => redirect(withParam(back, "fout", m));
 
-  // Leerling moet bij DEZE rijschool horen en gemachtigd zijn.
   const candidate = repo.getCandidate(user.tenantId, candidateId);
-  if (!candidate) redirect(withParam(back, "fout", "Kies eerst een leerling."));
-  if (!candidate!.authorized) redirect(withParam(back, "fout", "Deze leerling heeft de rijschool niet gemachtigd."));
+  if (!candidate) fail("Kies eerst een leerling.");
 
+  const [product, , startsAt] = slotId.split("|");
+  if (!(product in PRODUCT_LABEL) || Number.isNaN(Date.parse(startsAt ?? ""))) fail("Ongeldige examenplek.");
+  const category = categoryForProduct(product as Product);
+
+  // Eigen controle vooraf, zodat we meteen een duidelijke reden kunnen geven. Het CBR blijft leidend.
+  const client = getCbrClient(user.tenantId);
+  const auth = repo.getAuthorization(user.tenantId, candidate!.id, category);
+  const check = auth
+    ? usability(auth, { listMode: client.supportsAuthorizationList, today: new Date(), examStartsAt: startsAt })
+    : ({ ok: false, reason: "geen" } as const);
+  if (!check.ok) fail(REASON_TEXT[(check as { reason: UsabilityReason }).reason]);
+
+  let reservation;
   try {
-    const r = await getCbrClient(user.tenantId).reserve({ candidateId: candidate!.id, slotId });
-    repo.insertReservation(user.tenantId, user.id, r);
-    repo.audit(user.tenantId, user.id, "reservering.aangemaakt", `${candidate!.name}: ${r.product} ${r.startsAt}`);
+    reservation = await client.reserve({
+      candidateId: candidate!.id,
+      candidate: { cbrRef: candidate!.cbrRef, name: candidate!.name, birthDate: candidate!.birthDate },
+      slotId,
+    });
   } catch (e) {
-    const msg = e instanceof CbrError ? e.message : "Onbekende fout bij reserveren.";
-    redirect(withParam(back, "fout", msg));
+    if (e instanceof CbrError && e.code === "NOT_AUTHORIZED") {
+      // Het CBR kent de machtiging niet: een handmatige invoer was dus onjuist of is ingetrokken.
+      if (auth!.source === "handmatig") repo.setAuthorizationStatus(user.tenantId, auth!.id, "geweigerd");
+      else await syncAuthorizations(user.tenantId, { force: true });
+      repo.audit(user.tenantId, user.id, "reservering.geweigerd", `${candidate!.name}: geen machtiging volgens het CBR`);
+      fail(`Het CBR heeft de reservering geweigerd: machtiging ontbreekt of is ingetrokken (${AUTH_CATEGORY_LABEL[category]}). Laat de leerling opnieuw machtigen via Mijn CBR.`);
+    }
+    fail(e instanceof CbrError ? e.message : "Onbekende fout bij reserveren.");
   }
+  repo.insertReservation(user.tenantId, user.id, reservation!);
+  repo.audit(user.tenantId, user.id, "reservering.aangemaakt", `${candidate!.name}: ${reservation!.product} ${reservation!.startsAt}`);
+  // Bij een overzicht van het CBR verdwijnt de leerling daar mogelijk; direct bijwerken (best effort).
+  if (client.supportsAuthorizationList) await syncAuthorizations(user.tenantId, { force: true });
   revalidatePath("/reserveringen");
   redirect("/reserveringen?ok=gereserveerd");
 }
@@ -49,23 +76,57 @@ export async function cancelAction(formData: FormData) {
   redirect("/reserveringen?ok=geannuleerd");
 }
 
-export async function addCandidateAction(formData: FormData) {
+// ---------- Machtigingen ----------
+
+export async function refreshAuthorizationsAction() {
   const user = requireUser();
-  const name = String(formData.get("naam") ?? "").trim();
-  if (!name) redirect("/leerlingen?fout=Vul+een+naam+in");
-  const authorized = formData.get("gemachtigd") === "on";
-  repo.addCandidate(user.tenantId, name, authorized);
-  repo.audit(user.tenantId, user.id, "leerling.toegevoegd", name);
+  const res = await syncAuthorizations(user.tenantId, { force: true });
   revalidatePath("/leerlingen");
-  redirect("/leerlingen");
+  const msg = {
+    ok: ["ok", "Machtigingen bijgewerkt vanuit het CBR."],
+    "te-vers": ["ok", "Zojuist al bijgewerkt. Probeer het over een paar seconden opnieuw."],
+    "niet-ondersteund": ["fout", "Het CBR levert geen overzicht van machtigingen; voer ze handmatig in."],
+    fout: ["fout", "Het CBR is nu niet bereikbaar (de API is 's nachts en op zondagochtend niet beschikbaar). We tonen het laatst bekende overzicht."],
+  }[res.status] as ["ok" | "fout", string];
+  redirect(withParam("/leerlingen", msg[0], msg[1]));
 }
 
-export async function setAuthorizedAction(formData: FormData) {
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const validDate = (s: string) => DATE.test(s) && !Number.isNaN(Date.parse(s));
+
+/** Terugvaloptie: alleen als het CBR geen overzicht van machtigingen levert. */
+export async function addManualAuthorizationAction(f: FormData) {
   const user = requireUser();
-  const id = String(formData.get("id") ?? "");
-  const authorized = formData.get("gemachtigd") === "1";
-  repo.setCandidateAuthorized(user.tenantId, id, authorized);
-  repo.audit(user.tenantId, user.id, "leerling.machtiging", `${id}: ${authorized ? "ja" : "nee"}`);
+  const client = getCbrClient(user.tenantId);
+  const fail = (m: string): never => redirect(withParam("/leerlingen", "fout", m));
+  if (client.supportsAuthorizationList) fail("Machtigingen komen automatisch van het CBR; handmatig invoeren is niet nodig.");
+
+  const name = String(f.get("naam") ?? "").trim();
+  const birthDate = String(f.get("geboortedatum") ?? "");
+  const cbrRef = String(f.get("kandidaatnummer") ?? "").trim() || undefined;
+  const category = String(f.get("categorie") ?? "") as AuthCategory;
+  const validUntil = String(f.get("einddatum") ?? "");
+  if (!name) fail("Vul de naam van de leerling in.");
+  if (!validDate(birthDate) || birthDate > new Date().toISOString().slice(0, 10)) fail("Vul een geldige geboortedatum in.");
+  if (!(category in AUTH_CATEGORY_LABEL)) fail("Kies een categorie.");
+  if (!validDate(validUntil)) fail("Vul de einddatum van de machtiging in.");
+  if (f.get("bevestiging") !== "on") fail("Bevestig dat u de machtiging heeft gecontroleerd.");
+
+  const res = repo.upsertManualAuthorization(user.tenantId, { name, birthDate, cbrRef, category, validUntil });
+  if (!res.ok) fail("Deze machtiging is al door het CBR bevestigd.");
+  repo.audit(user.tenantId, user.id, "machtiging.handmatig", `${name}: ${AUTH_CATEGORY_LABEL[category]} t/m ${validUntil}`);
+  revalidatePath("/leerlingen");
+  redirect(withParam("/leerlingen", "ok", `Machtiging voor ${name} opgeslagen (niet geverifieerd).`));
+}
+
+/** Alleen handmatig ingevoerde machtigingen kan de rijschool zelf intrekken; die van het CBR beheert de leerling. */
+export async function revokeManualAuthorizationAction(f: FormData) {
+  const user = requireUser();
+  const a = repo.getAuthorizationById(user.tenantId, String(f.get("id") ?? ""));
+  if (a && a.source === "handmatig" && a.status === "actief") {
+    repo.setAuthorizationStatus(user.tenantId, a.id, "ingetrokken");
+    repo.audit(user.tenantId, user.id, "machtiging.ingetrokken", a.id);
+  }
   revalidatePath("/leerlingen");
   redirect("/leerlingen");
 }

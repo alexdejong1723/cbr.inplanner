@@ -122,6 +122,29 @@ DROP TABLE keep;
 CREATE UNIQUE INDEX idx_users_one_per_tenant ON users(tenant_id);
 -- De kolom users.role blijft bestaan (SQLite kan hem niet droppen vanwege de CHECK) maar is altijd 'eigenaar'.
 `,
+// v4: machtigingen per leerling en categorie (vervangt het zelf aan te vinken "gemachtigd")
+`
+-- Het oude vinkje was een zelfverklaring zonder categorie of einddatum. Het wordt verwijderd:
+-- leerlingen blijven bestaan, hun machtigingen komen van het CBR of worden opnieuw ingevoerd.
+ALTER TABLE candidates DROP COLUMN authorized;
+ALTER TABLE candidates ADD COLUMN birth_date TEXT;
+ALTER TABLE candidates ADD COLUMN cbr_ref TEXT;
+CREATE UNIQUE INDEX idx_candidates_cbr_ref ON candidates(tenant_id, cbr_ref) WHERE cbr_ref IS NOT NULL;
+ALTER TABLE tenants ADD COLUMN authorizations_synced_at TEXT;
+CREATE TABLE authorizations (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id),
+  candidate_id TEXT NOT NULL REFERENCES candidates(id),
+  category TEXT NOT NULL CHECK (category IN ('B_THEORIE','B_PRAKTIJK')),
+  valid_until TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('cbr','handmatig')),
+  status TEXT NOT NULL CHECK (status IN ('actief','niet_meer_zichtbaar','geweigerd','ingetrokken')),
+  verified_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (candidate_id, category)
+);
+CREATE INDEX idx_authorizations_tenant ON authorizations(tenant_id);
+`,
 ];
 
 function migrate(d: DatabaseSync) {

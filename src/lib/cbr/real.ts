@@ -10,6 +10,9 @@ import { CbrError, type CbrClient } from "./client";
  * alleen de mapping tussen CBR-veldnamen en src/lib/cbr/types.ts aan.
  */
 export class RealCbrClient implements CbrClient {
+  /** Zet op true zodra blijkt dat de Opleiders API de gemachtigde kandidaten kan teruggeven. */
+  readonly supportsAuthorizationList = false;
+  listAuthorizations(): never { return this.fail(); }
   private fail(): never {
     throw new CbrError(
       "UNAVAILABLE",
