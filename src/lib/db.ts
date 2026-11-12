@@ -7,7 +7,13 @@ import { dirname } from "node:path";
  * repo.ts, zodat een overstap naar Postgres (EU-regio) een kwestie is van die
  * ene laag vervangen.
  */
-const SCHEMA = `
+/**
+ * Migraties: index i = versie i+1, bijgehouden in PRAGMA user_version.
+ * Voeg wijzigingen ALTIJD als nieuwe migratie toe; pas bestaande nooit aan.
+ */
+const MIGRATIONS: string[] = [
+// v1: basis
+`
 CREATE TABLE IF NOT EXISTS tenants (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -58,7 +64,60 @@ CREATE TABLE IF NOT EXISTS audit_log (
   at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, id DESC);
-`;
+`,
+// v2: goedkeuring rijscholen, e-mailverificatie, tokens, superadmins, dev-outbox
+`
+ALTER TABLE tenants ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'
+  CHECK (status IN ('pending','approved','rejected','suspended'));
+ALTER TABLE tenants ADD COLUMN reviewed_at TEXT;
+ALTER TABLE users ADD COLUMN email_verified_at TEXT;
+-- Bestaande omgevingen (van voor deze migratie) blijven bruikbaar.
+UPDATE tenants SET status = 'approved', reviewed_at = created_at;
+UPDATE users SET email_verified_at = created_at;
+CREATE TABLE tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL CHECK (purpose IN ('verify','reset')),
+  expires_at TEXT NOT NULL,
+  used_at TEXT
+);
+CREATE INDEX idx_tokens_user ON tokens(user_id, purpose);
+CREATE TABLE admins (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE admin_sessions (
+  token_hash TEXT PRIMARY KEY,
+  admin_id TEXT NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  to_addr TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+`,
+];
+
+function migrate(d: DatabaseSync) {
+  const current = (d.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+  for (let v = current; v < MIGRATIONS.length; v++) {
+    d.exec("BEGIN");
+    try {
+      d.exec(MIGRATIONS[v]);
+      d.exec(`PRAGMA user_version = ${v + 1}`);
+      d.exec("COMMIT");
+    } catch (e) {
+      d.exec("ROLLBACK");
+      throw e;
+    }
+  }
+}
 
 const g = globalThis as unknown as { __db?: DatabaseSync };
 
@@ -69,7 +128,7 @@ export function db(): DatabaseSync {
   const d = new DatabaseSync(path);
   d.exec("PRAGMA foreign_keys = ON");
   if (path !== ":memory:") d.exec("PRAGMA journal_mode = WAL");
-  d.exec(SCHEMA);
+  migrate(d);
   g.__db = d;
   return d;
 }

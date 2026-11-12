@@ -4,7 +4,7 @@ import { listCandidates, listReservations } from "@/lib/repo";
 import { CANCEL_REASON_TEXT, canCancel, freeCancelDeadline } from "@/lib/cbr/rules";
 import { PRODUCT_LABEL } from "@/lib/cbr/types";
 import { fmtDate, fmtDateTime } from "@/lib/format";
-import { cancelAction } from "../actions";
+import { cancelAction } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 

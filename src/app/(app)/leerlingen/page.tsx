@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { listCandidates } from "@/lib/repo";
-import { addCandidateAction, setAuthorizedAction } from "../actions";
+import { addCandidateAction, setAuthorizedAction } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 

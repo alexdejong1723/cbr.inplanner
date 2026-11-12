@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import * as repo from "./repo";
@@ -6,20 +6,6 @@ import type { Role, User } from "./repo";
 
 const COOKIE = "session";
 const SESSION_DAYS = 7;
-
-export function hashPassword(password: string): string {
-  const salt = randomBytes(16);
-  const hash = scryptSync(password, salt, 64);
-  return `${salt.toString("hex")}:${hash.toString("hex")}`;
-}
-
-export function verifyPassword(password: string, stored: string): boolean {
-  const [saltHex, hashHex] = stored.split(":");
-  if (!saltHex || !hashHex) return false;
-  const expected = Buffer.from(hashHex, "hex");
-  const actual = scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
-  return timingSafeEqual(actual, expected);
-}
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -53,18 +39,4 @@ export function requireUser(role?: Role): User {
   if (!user) redirect("/inloggen");
   if (role && user.role !== role) redirect("/?fout=geen-rechten");
   return user;
-}
-
-// Eenvoudige rem op wachtwoord raden: max 5 fouten per e-mail per 15 min (per proces).
-const g = globalThis as unknown as { __attempts?: Map<string, number[]> };
-const attempts: Map<string, number[]> = (g.__attempts ??= new Map<string, number[]>());
-const WINDOW = 15 * 60_000;
-export function loginThrottled(email: string): boolean {
-  const recent = (attempts.get(email.toLowerCase()) ?? []).filter((t) => Date.now() - t < WINDOW);
-  attempts.set(email.toLowerCase(), recent);
-  return recent.length >= 5;
-}
-export function recordFailedLogin(email: string) {
-  const k = email.toLowerCase();
-  attempts.set(k, [...(attempts.get(k) ?? []), Date.now()]);
 }

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { db } from "./db.ts";
 import type { Candidate, Product, Reservation } from "./cbr/types.ts";
 
@@ -19,8 +19,13 @@ const run = (sql: string, ...p: (string | number | null)[]) => db().prepare(sql)
 
 export type Role = "eigenaar" | "planner";
 export interface User { id: string; tenantId: string; email: string; name: string; role: Role }
-export interface UserWithHash extends User { passwordHash: string }
-export interface Tenant { id: string; name: string }
+export type TenantStatus = "pending" | "approved" | "rejected" | "suspended";
+export interface UserWithHash extends User {
+  passwordHash: string;
+  emailVerified: boolean;
+  tenantStatus: TenantStatus;
+}
+export interface Tenant { id: string; name: string; status: TenantStatus }
 
 const toUser = (r: Row): User => ({
   id: r.id as string, tenantId: r.tenant_id as string, email: r.email as string,
@@ -53,8 +58,29 @@ export function addUser(tenantId: string, i: { name: string; email: string; pass
 }
 
 export function findUserByEmail(email: string): UserWithHash | undefined {
-  const r = one("SELECT * FROM users WHERE email = ?", email);
-  return r && { ...toUser(r), passwordHash: r.password_hash as string };
+  const r = one(
+    `SELECT u.*, t.status AS tenant_status FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.email = ?`,
+    email,
+  );
+  return r && {
+    ...toUser(r),
+    passwordHash: r.password_hash as string,
+    emailVerified: r.email_verified_at !== null,
+    tenantStatus: r.tenant_status as TenantStatus,
+  };
+}
+
+export function verifyUserEmail(userId: string) {
+  run("UPDATE users SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL", now(), userId);
+}
+
+export function setUserPassword(userId: string, passwordHash: string) {
+  run("UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, userId);
+}
+
+export function getUserById(userId: string): User | undefined {
+  const r = one("SELECT * FROM users WHERE id = ?", userId);
+  return r && toUser(r);
 }
 
 export function listUsers(tenantId: string): User[] {
@@ -62,8 +88,8 @@ export function listUsers(tenantId: string): User[] {
 }
 
 export function getTenant(tenantId: string): Tenant | undefined {
-  const r = one("SELECT id, name FROM tenants WHERE id = ?", tenantId);
-  return r && { id: r.id as string, name: r.name as string };
+  const r = one("SELECT id, name, status FROM tenants WHERE id = ?", tenantId);
+  return r && { id: r.id as string, name: r.name as string, status: r.status as TenantStatus };
 }
 
 // ---------- Sessies ----------
@@ -72,11 +98,130 @@ export function insertSession(tokenHash: string, userId: string, expiresAt: Date
   run("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?,?,?)", tokenHash, userId, expiresAt.toISOString());
 }
 export function deleteSession(tokenHash: string) { run("DELETE FROM sessions WHERE token_hash = ?", tokenHash); }
+export function deleteSessionsForUser(userId: string) { run("DELETE FROM sessions WHERE user_id = ?", userId); }
+export function deleteSessionsForTenant(tenantId: string) {
+  run("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)", tenantId);
+}
+/**
+ * Een sessie telt alleen als het e-mailadres bevestigd is EN de rijschool is
+ * goedgekeurd. Wordt een rijschool later geschorst, dan werkt elke bestaande
+ * sessie direct niet meer.
+ */
 export function userForSession(tokenHash: string): User | undefined {
   const r = one(
-    `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-     WHERE s.token_hash = ? AND s.expires_at > ?`, tokenHash, now());
+    `SELECT u.* FROM sessions s
+       JOIN users u ON u.id = s.user_id
+       JOIN tenants t ON t.id = u.tenant_id
+     WHERE s.token_hash = ? AND s.expires_at > ?
+       AND u.email_verified_at IS NOT NULL AND t.status = 'approved'`,
+    tokenHash, now());
   return r && toUser(r);
+}
+
+// ---------- Tokens (e-mailverificatie, wachtwoord resetten) ----------
+
+export type TokenPurpose = "verify" | "reset";
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+
+/** Maakt een eenmalig token; eerdere tokens met hetzelfde doel voor deze gebruiker vervallen. */
+export function createToken(userId: string, purpose: TokenPurpose, ttlMs: number): string {
+  const raw = randomBytes(32).toString("base64url");
+  run("DELETE FROM tokens WHERE user_id = ? AND purpose = ?", userId, purpose);
+  run("INSERT INTO tokens (token_hash, user_id, purpose, expires_at) VALUES (?,?,?,?)",
+    sha(raw), userId, purpose, new Date(Date.now() + ttlMs).toISOString());
+  return raw;
+}
+
+/** Controleert zonder te verbruiken (voor het tonen van het formulier). */
+export function peekToken(raw: string, purpose: TokenPurpose): boolean {
+  return !!one("SELECT 1 AS x FROM tokens WHERE token_hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?",
+    sha(raw), purpose, now());
+}
+
+/** Verbruikt het token atomair; geeft de gebruiker terug, of undefined als ongeldig/gebruikt/verlopen. */
+export function consumeToken(raw: string, purpose: TokenPurpose): string | undefined {
+  const h = sha(raw);
+  const res = run("UPDATE tokens SET used_at = ? WHERE token_hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?",
+    now(), h, purpose, now());
+  if (Number(res.changes) !== 1) return undefined;
+  return one("SELECT user_id FROM tokens WHERE token_hash = ?", h)?.user_id as string | undefined;
+}
+
+// ---------- Beheerders (superadmin) en goedkeuring van rijscholen ----------
+
+export interface Admin { id: string; email: string; name: string }
+export interface AdminWithHash extends Admin { passwordHash: string }
+
+export function upsertAdmin(email: string, name: string, passwordHash: string): Admin {
+  const existing = one("SELECT id FROM admins WHERE email = ?", email);
+  if (existing) {
+    run("UPDATE admins SET name = ?, password_hash = ? WHERE id = ?", name, passwordHash, existing.id as string);
+    run("DELETE FROM admin_sessions WHERE admin_id = ?", existing.id as string);
+    return { id: existing.id as string, email, name };
+  }
+  const id = randomUUID();
+  run("INSERT INTO admins (id, email, name, password_hash, created_at) VALUES (?,?,?,?,?)", id, email, name, passwordHash, now());
+  return { id, email, name };
+}
+export function findAdminByEmail(email: string): AdminWithHash | undefined {
+  const r = one("SELECT * FROM admins WHERE email = ?", email);
+  return r && { id: r.id as string, email: r.email as string, name: r.name as string, passwordHash: r.password_hash as string };
+}
+export function insertAdminSession(tokenHash: string, adminId: string, expiresAt: Date) {
+  run("INSERT INTO admin_sessions (token_hash, admin_id, expires_at) VALUES (?,?,?)", tokenHash, adminId, expiresAt.toISOString());
+}
+export function deleteAdminSession(tokenHash: string) { run("DELETE FROM admin_sessions WHERE token_hash = ?", tokenHash); }
+export function adminForSession(tokenHash: string): Admin | undefined {
+  const r = one(
+    `SELECT a.* FROM admin_sessions s JOIN admins a ON a.id = s.admin_id WHERE s.token_hash = ? AND s.expires_at > ?`,
+    tokenHash, now());
+  return r && { id: r.id as string, email: r.email as string, name: r.name as string };
+}
+
+export interface TenantOverview {
+  id: string; name: string; status: TenantStatus; createdAt: string;
+  ownerName: string; ownerEmail: string; ownerVerified: boolean;
+}
+export function listTenantsForAdmin(status: TenantStatus): TenantOverview[] {
+  return all(
+    `SELECT t.id, t.name, t.status, t.created_at,
+            o.name AS owner_name, o.email AS owner_email, o.email_verified_at AS owner_verified
+     FROM tenants t
+     JOIN users o ON o.id = (SELECT id FROM users WHERE tenant_id = t.id AND role = 'eigenaar' ORDER BY created_at LIMIT 1)
+     WHERE t.status = ? ORDER BY t.created_at DESC`, status,
+  ).map((r) => ({
+    id: r.id as string, name: r.name as string, status: r.status as TenantStatus, createdAt: r.created_at as string,
+    ownerName: r.owner_name as string, ownerEmail: r.owner_email as string, ownerVerified: r.owner_verified !== null,
+  }));
+}
+export function countTenantsByStatus(): Record<TenantStatus, number> {
+  const out: Record<TenantStatus, number> = { pending: 0, approved: 0, rejected: 0, suspended: 0 };
+  for (const r of all("SELECT status, COUNT(*) AS n FROM tenants GROUP BY status")) out[r.status as TenantStatus] = Number(r.n);
+  return out;
+}
+export function getTenantOwner(tenantId: string): (User & { emailVerified: boolean }) | undefined {
+  const r = one("SELECT * FROM users WHERE tenant_id = ? AND role = 'eigenaar' ORDER BY created_at LIMIT 1", tenantId);
+  return r && { ...toUser(r), emailVerified: r.email_verified_at !== null };
+}
+
+const TRANSITIONS: Record<TenantStatus, TenantStatus[]> = {
+  pending: ["approved", "rejected"],
+  approved: ["suspended"],
+  suspended: ["approved"],
+  rejected: ["approved"],
+};
+/** Wijzigt de status volgens de toegestane overgangen. Geeft false als de overgang niet mag. */
+export function setTenantStatus(tenantId: string, to: TenantStatus): boolean {
+  const t = getTenant(tenantId);
+  if (!t || !TRANSITIONS[t.status].includes(to)) return false;
+  run("UPDATE tenants SET status = ?, reviewed_at = ? WHERE id = ?", to, now(), tenantId);
+  return true;
+}
+
+// ---------- Dev-outbox (alleen gebruikt zonder SMTP in ontwikkeling) ----------
+
+export function insertOutbox(to: string, subject: string, body: string) {
+  run("INSERT INTO outbox (to_addr, subject, body, at) VALUES (?,?,?,?)", to, subject, body, now());
 }
 
 // ---------- Leerlingen ----------

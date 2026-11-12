@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { listUsers } from "@/lib/repo";
-import { addTeamMemberAction } from "../auth-actions";
+import { addTeamMemberAction } from "@/app/auth-actions";
 
 export const dynamic = "force-dynamic";
 

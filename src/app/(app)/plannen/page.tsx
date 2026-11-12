@@ -3,7 +3,7 @@ import { getCbrClient } from "@/lib/cbr";
 import { listCandidates } from "@/lib/repo";
 import { PRODUCT_LABEL, type Product } from "@/lib/cbr/types";
 import { fmtDateTime, isoDate } from "@/lib/format";
-import { reserveAction } from "../actions";
+import { reserveAction } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 

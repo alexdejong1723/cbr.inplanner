@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { registerAction } from "../auth-actions";
+import { registerAction } from "@/app/auth-actions";
 
 export default function Registreer({ searchParams }: { searchParams: { fout?: string } }) {
   return (
@@ -11,8 +11,9 @@ export default function Registreer({ searchParams }: { searchParams: { fout?: st
         <label>Uw naam<input name="naam" required autoComplete="name" /></label>
         <label>E-mailadres<input type="email" name="email" required autoComplete="username" /></label>
         <label>Wachtwoord (min. 12 tekens)<input type="password" name="wachtwoord" required minLength={12} autoComplete="new-password" /></label>
-        <button type="submit">Eigen omgeving aanmaken</button>
+        <button type="submit">Aanmelding versturen</button>
       </form>
+      <p className="muted">Na het bevestigen van uw e-mailadres beoordelen wij uw aanmelding. Pas na goedkeuring kunt u inloggen.</p>
       <p className="muted">Heeft u al een account? <Link href="/inloggen">Inloggen</Link></p>
     </div>
   );

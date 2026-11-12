@@ -7,15 +7,18 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test src/lib/cbr/rules.test.ts src/lib/repo.test.ts"
+    "create-admin": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/create-superadmin.ts",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test src/lib/cbr/rules.test.ts src/lib/repo.test.ts src/lib/auth-flow.test.ts"
   },
   "dependencies": {
     "next": "14.2.35",
+    "nodemailer": "^6.9.16",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@types/node": "22.10.2",
+    "@types/nodemailer": "^6.4.17",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "typescript": "5.7.2"
