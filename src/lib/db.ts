@@ -102,6 +102,26 @@ CREATE TABLE outbox (
   at TEXT NOT NULL
 );
 `,
+// v3: eenmanszaak-model, precies één gebruiker per rijschool (teamleden/rollen vervallen)
+`
+-- Bestaande extra gebruikers (teamleden) worden verwijderd; per rijschool blijft de oudste
+-- eigenaar over. Hun sessies en tokens verdwijnen mee (ON DELETE CASCADE). Reserveringen die
+-- zij maakten blijven bestaan en worden op de overblijvende gebruiker gezet (verplicht door de
+-- foreign key). De auditlog blijft ongewijzigd; verwijderde gebruikers tonen daar als "-".
+CREATE TEMP TABLE keep AS
+  SELECT id, tenant_id FROM (
+    SELECT id, tenant_id,
+           ROW_NUMBER() OVER (PARTITION BY tenant_id ORDER BY (role = 'eigenaar') DESC, created_at, id) AS rn
+    FROM users
+  ) WHERE rn = 1;
+UPDATE reservations
+   SET created_by = (SELECT id FROM keep WHERE keep.tenant_id = reservations.tenant_id)
+ WHERE created_by NOT IN (SELECT id FROM keep);
+DELETE FROM users WHERE id NOT IN (SELECT id FROM keep);
+DROP TABLE keep;
+CREATE UNIQUE INDEX idx_users_one_per_tenant ON users(tenant_id);
+-- De kolom users.role blijft bestaan (SQLite kan hem niet droppen vanwege de CHECK) maar is altijd 'eigenaar'.
+`,
 ];
 
 function migrate(d: DatabaseSync) {

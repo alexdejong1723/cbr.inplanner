@@ -2,16 +2,19 @@
 
 ## Doel
 
-Een multi-tenant webapplicatie: iedere rijschool krijgt een eigen, afgeschermde omgeving waarin
-medewerkers leerlingen beheren en examens zoeken, reserveren en annuleren via de CBR Opleiders API.
+Een multi-tenant webapplicatie voor **eenmanszaken**: iedere rijschool krijgt een eigen, afgeschermde omgeving
+waarin de rijschoolhouder (tevens enige opleider) leerlingen beheert en examens zoeken, reserveren en annuleren via de CBR Opleiders API.
 Wij (de exploitant) zijn de **Leverancier** richting het CBR; de rijscholen zijn tenants.
 
 ## Multi-tenancy: hoe het werkt
 
 - **Aanmelden met goedkeuring:** `/registreer` maakt een rijschool (tenant) met status `pending` plus een
-  eerste gebruiker met rol *eigenaar*. Er wordt **geen sessie** gestart. Zie "Aanmeld- en accountflow" hieronder.
-- **Rollen:** *eigenaar* (beheert o.a. het team) en *planner* (leerlingen en reserveringen).
-  Eigenaren voegen collega's toe op `/team`.
+  enige gebruiker. Er wordt **geen sessie** gestart. Zie "Aanmeld- en accountflow" hieronder.
+- **Eén gebruiker per rijschool:** de app is bedoeld voor eenmanszaken, dus er zijn geen rollen, teamleden of
+  uitnodigingen. Dit wordt ook door de database afgedwongen (unieke index op `users.tenant_id`). Tenant en gebruiker
+  zijn bewust gescheiden tabellen gebleven; teamleden later toevoegen vraagt dan alleen een nieuwe migratie
+  die die index weghaalt, plus een rollenmodel. De kolom `users.role` blijft bestaan (SQLite kan hem niet droppen
+  door de CHECK-constraint) maar is altijd `eigenaar`.
 - **Isolatie:** de tenant komt **altijd uit de server-side sessie**, nooit uit een formulier of URL.
   Alle database-toegang gaat via `src/lib/repo.ts`, waar elke functie een `tenantId` verplicht
   meekrijgt en elke query erop filtert. Een geraden id van een andere rijschool geeft dus "niet
@@ -44,7 +47,6 @@ Statussen van een rijschool: `pending` → `approved` / `rejected`; `approved` �
 - De reden van weigering (niet bevestigd / in afwachting / afgewezen / geschorst) wordt pas getoond
   **na een juist wachtwoord**, zodat niemand via de loginpagina kan nagaan welke accounts bestaan.
 - **Goedkeuren kan pas als de eigenaar zijn e-mailadres heeft bevestigd.**
-- **Teamleden** die een eigenaar toevoegt moeten hun e-mailadres ook bevestigen voordat ze kunnen inloggen.
 - **Verificatielink:** de GET-pagina toont alleen een knop; het token wordt pas bij de klik verbruikt, zodat
   virus-/mailscanners die links vooraf ophalen het niet opgebruiken.
 - **Wachtwoord vergeten:** `/wachtwoord-vergeten` geeft **altijd dezelfde melding**, ongeacht of het adres bestaat.
@@ -58,12 +60,14 @@ Statussen van een rijschool: `pending` → `approved` / `rejected`; `approved` �
   stilletjes geen mail verstuurd wordt. Links in mails gebruiken `APP_URL` (nooit de Host-header).
 - **Migraties:** `src/lib/db.ts` bevat genummerde migraties (`PRAGMA user_version`). Bestaande databases van vóór
   deze functie worden automatisch bijgewerkt en hun rijscholen blijven `approved`; nieuwe rijscholen starten
-  altijd als `pending` (ook de kolom-default is `pending`).
+  altijd als `pending` (ook de kolom-default is `pending`). Migratie 3 (eenmanszaak) verwijdert bij bestaande
+  databases extra gebruikers per rijschool (de oudste eigenaar blijft); hun reserveringen blijven bestaan en
+  komen op de overblijvende gebruiker te staan, de auditlog blijft ongewijzigd.
 
 ## Schermen
 
 Rijschool: Overzicht · Examen inplannen (product/locatie/datum, reserveren voor een gemachtigde leerling) ·
-Reserveringen (met annuleerregels) · Leerlingen (toevoegen, machtiging) · Team · Activiteit.
+Reserveringen (met annuleerregels) · Leerlingen (toevoegen, machtiging) · Activiteit.
 Publiek: Aanmelden · Inloggen · E-mail bevestigen · Verificatiemail opnieuw · Wachtwoord vergeten/resetten.
 Superadmin (`/admin`): rijscholen per status, goedkeuren, afwijzen met reden, schorsen, heractiveren.
 
@@ -122,7 +126,7 @@ rijschool nodig, want jullie verwerken namens hen.
 
 1. **Nu:** toegang aanvragen bij het CBR en de open vragen uit `api-overzicht.md` stellen (zeker: meerdere rijscholen onder één Leverancier).
 2. **Fase 1 (gedaan):** multi-tenant prototype met mock, aanmelden met goedkeuring, e-mailverificatie, wachtwoord vergeten, superadmin.
-3. **Fase 2:** PostgreSQL (EU), 2FA, uitnodigingsflow voor teamleden (nu: eigenaar kiest een tijdelijk wachtwoord), EU-hosting met vast IP, CBR-gegevens per tenant versleuteld.
+3. **Fase 2:** PostgreSQL (EU), 2FA, EU-hosting met vast IP, CBR-gegevens per tenant versleuteld.
 4. **Fase 3 (na acceptatie):** `RealCbrClient` tegen de Developer Portal-spec, sandbox-tests, contracttests tegen de mock.
 5. **Fase 4:** wachtlijst/alerts voor vrijgekomen plekken, kalenderweergave, herinneringen naar leerlingen (EU-provider), A/BE/beroeps/code 95 conform CBR-planning.
 

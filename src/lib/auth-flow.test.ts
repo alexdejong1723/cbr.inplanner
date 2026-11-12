@@ -108,3 +108,11 @@ test("sessies van een geschorste rijschool worden ingetrokken en leven niet op b
   repo.setTenantStatus(t.tenantId, "approved");
   assert.equal(repo.userForSession(h), undefined);
 });
+
+test("een rijschool heeft precies één gebruiker (eenmanszaak), ook op databaseniveau", () => {
+  const t = repo.createTenantWithOwner({ tenantName: "Vier", name: "Vera", email: "vera@example.nl", passwordHash: "x:y" });
+  assert.throws(() =>
+    db().prepare("INSERT INTO users (id, tenant_id, email, name, password_hash, role, created_at) VALUES ('u2', ?, 'extra@example.nl', 'Extra', 'x:y', 'planner', '2027-01-01')").run(t.tenantId),
+  );
+  assert.equal(repo.getTenantOwner(t.tenantId)?.id, t.id);
+});

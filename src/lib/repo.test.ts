@@ -36,6 +36,5 @@ test("andere rijschool kan reservering niet zien of annuleren (IDOR)", () => {
 
 test("auditlog en gebruikers zijn per rijschool gescheiden", () => {
   assert.ok(repo.listAudit(a.tenantId).length > 0);
-  assert.equal(repo.listUsers(b.tenantId).length, 1);
   assert.ok(repo.listAudit(b.tenantId).every((r) => r.userName !== "Eigenaar a"));
 });

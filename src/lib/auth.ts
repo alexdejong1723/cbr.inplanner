@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import * as repo from "./repo";
-import type { Role, User } from "./repo";
+import type { User } from "./repo";
 
 const COOKIE = "session";
 const SESSION_DAYS = 7;
@@ -34,9 +34,8 @@ export function getUser(): User | undefined {
   return token ? repo.userForSession(sha256(token)) : undefined;
 }
 
-export function requireUser(role?: Role): User {
+export function requireUser(): User {
   const user = getUser();
   if (!user) redirect("/inloggen");
-  if (role && user.role !== role) redirect("/?fout=geen-rechten");
   return user;
 }

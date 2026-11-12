@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { endSession, requireUser, startSession } from "@/lib/auth";
+import { endSession, startSession } from "@/lib/auth";
 import { adminNoticeMail, resetMail, trySendMail, verifyMail } from "@/lib/mail";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/password";
 import { allow, isLimited, recordHit } from "@/lib/ratelimit";
@@ -48,7 +48,7 @@ export async function confirmEmailAction(f: FormData) {
   const tenant = repo.getTenant(user.tenantId)!;
   repo.audit(user.tenantId, user.id, "email.bevestigd", user.email);
   const notify = process.env.ADMIN_NOTIFY_EMAIL;
-  if (notify && tenant.status === "pending" && user.role === "eigenaar") {
+  if (notify && tenant.status === "pending") {
     await trySendMail(adminNoticeMail(notify, tenant.name, `${user.name} <${user.email}>`));
   }
   redirect(`/inloggen?ok=${encodeURIComponent(
@@ -136,22 +136,4 @@ export async function resetPasswordAction(f: FormData) {
   repo.deleteSessionsForUser(userId!);
   repo.audit(user.tenantId, user.id, "wachtwoord.gewijzigd", "via resetlink");
   go("/inloggen", "ok", "Wachtwoord gewijzigd. U kunt nu inloggen.");
-}
-
-// ---------- Team ----------
-
-export async function addTeamMemberAction(f: FormData) {
-  const me = requireUser("eigenaar");
-  const name = str(f, "naam"), email = str(f, "email").toLowerCase();
-  const password = String(f.get("wachtwoord") ?? "");
-  const role = f.get("rol") === "eigenaar" ? "eigenaar" : "planner";
-  if (!name || !EMAIL.test(email)) go("/team", "fout", "Vul een naam en geldig e-mailadres in.");
-  const problem = passwordProblem(password);
-  if (problem) go("/team", "fout", problem);
-  if (repo.findUserByEmail(email)) go("/team", "fout", "Dit e-mailadres is al in gebruik.");
-  const user = repo.addUser(me.tenantId, { name, email, passwordHash: hashPassword(password), role });
-  repo.audit(me.tenantId, me.id, "gebruiker.toegevoegd", `${name} (${role})`);
-  // Ook teamleden moeten hun e-mailadres bevestigen voordat ze kunnen inloggen.
-  await sendVerification(user);
-  go("/team", "ok", "toegevoegd; er is een bevestigingsmail verstuurd");
 }

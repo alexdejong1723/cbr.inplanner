@@ -17,8 +17,8 @@ const run = (sql: string, ...p: (string | number | null)[]) => db().prepare(sql)
 
 // ---------- Rijscholen & gebruikers ----------
 
-export type Role = "eigenaar" | "planner";
-export interface User { id: string; tenantId: string; email: string; name: string; role: Role }
+/** Eenmanszaak: elke rijschool heeft precies één gebruiker (de eigenaar, tevens opleider). */
+export interface User { id: string; tenantId: string; email: string; name: string }
 export type TenantStatus = "pending" | "approved" | "rejected" | "suspended";
 export interface UserWithHash extends User {
   passwordHash: string;
@@ -29,7 +29,7 @@ export interface Tenant { id: string; name: string; status: TenantStatus }
 
 const toUser = (r: Row): User => ({
   id: r.id as string, tenantId: r.tenant_id as string, email: r.email as string,
-  name: r.name as string, role: r.role as Role,
+  name: r.name as string,
 });
 
 export function createTenantWithOwner(i: { tenantName: string; name: string; email: string; passwordHash: string }): User {
@@ -47,14 +47,7 @@ export function createTenantWithOwner(i: { tenantName: string; name: string; ema
     throw e;
   }
   audit(tenantId, userId, "rijschool.aangemaakt", i.tenantName);
-  return { id: userId, tenantId, email: i.email, name: i.name, role: "eigenaar" };
-}
-
-export function addUser(tenantId: string, i: { name: string; email: string; passwordHash: string; role: Role }): User {
-  const id = randomUUID();
-  run("INSERT INTO users (id, tenant_id, email, name, password_hash, role, created_at) VALUES (?,?,?,?,?,?,?)",
-    id, tenantId, i.email, i.name, i.passwordHash, i.role, now());
-  return { id, tenantId, email: i.email, name: i.name, role: i.role };
+  return { id: userId, tenantId, email: i.email, name: i.name };
 }
 
 export function findUserByEmail(email: string): UserWithHash | undefined {
@@ -81,10 +74,6 @@ export function setUserPassword(userId: string, passwordHash: string) {
 export function getUserById(userId: string): User | undefined {
   const r = one("SELECT * FROM users WHERE id = ?", userId);
   return r && toUser(r);
-}
-
-export function listUsers(tenantId: string): User[] {
-  return all("SELECT * FROM users WHERE tenant_id = ? ORDER BY created_at", tenantId).map(toUser);
 }
 
 export function getTenant(tenantId: string): Tenant | undefined {
@@ -187,7 +176,7 @@ export function listTenantsForAdmin(status: TenantStatus): TenantOverview[] {
     `SELECT t.id, t.name, t.status, t.created_at,
             o.name AS owner_name, o.email AS owner_email, o.email_verified_at AS owner_verified
      FROM tenants t
-     JOIN users o ON o.id = (SELECT id FROM users WHERE tenant_id = t.id AND role = 'eigenaar' ORDER BY created_at LIMIT 1)
+     JOIN users o ON o.tenant_id = t.id
      WHERE t.status = ? ORDER BY t.created_at DESC`, status,
   ).map((r) => ({
     id: r.id as string, name: r.name as string, status: r.status as TenantStatus, createdAt: r.created_at as string,
@@ -199,8 +188,9 @@ export function countTenantsByStatus(): Record<TenantStatus, number> {
   for (const r of all("SELECT status, COUNT(*) AS n FROM tenants GROUP BY status")) out[r.status as TenantStatus] = Number(r.n);
   return out;
 }
+/** De (enige) gebruiker van de rijschool. */
 export function getTenantOwner(tenantId: string): (User & { emailVerified: boolean }) | undefined {
-  const r = one("SELECT * FROM users WHERE tenant_id = ? AND role = 'eigenaar' ORDER BY created_at LIMIT 1", tenantId);
+  const r = one("SELECT * FROM users WHERE tenant_id = ?", tenantId);
   return r && { ...toUser(r), emailVerified: r.email_verified_at !== null };
 }
 
