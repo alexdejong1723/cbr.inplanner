@@ -1,0 +1,23 @@
+:root { --bg:#f6f7f9; --card:#fff; --ink:#1a2233; --muted:#5b6578; --line:#e1e5ec; --brand:#0b5cad; --warn:#b45309; --bad:#b42318; --ok:#067647; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0f141c; --card:#171e29; --ink:#e8ecf3; --muted:#9aa5b8; --line:#2a3342; --brand:#6aaeff; --warn:#f5b04a; --bad:#ff8a80; --ok:#5ed39a; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,sans-serif; }
+header.nav { background:var(--card); border-bottom:1px solid var(--line); }
+header.nav .in { max-width:1000px; margin:0 auto; padding:0 16px; display:flex; gap:20px; align-items:center; flex-wrap:wrap; min-height:56px; }
+header.nav strong { margin-right:auto; }
+a { color:var(--brand); text-decoration:none; } a:hover { text-decoration:underline; }
+main { max-width:1000px; margin:0 auto; padding:24px 16px 64px; }
+h1 { margin:0 0 16px; font-size:1.6rem; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+.grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); }
+.muted { color:var(--muted); font-size:.9rem; }
+.banner { background:color-mix(in srgb,var(--warn) 15%,var(--card)); border:1px solid var(--warn); border-radius:8px; padding:8px 12px; margin-bottom:16px; font-size:.9rem; }
+table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:middle; } th { color:var(--muted); font-weight:600; font-size:.85rem; }
+.table-wrap { overflow-x:auto; }
+form.filters { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+label { display:flex; flex-direction:column; gap:4px; font-size:.85rem; color:var(--muted); }
+select,input,button { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
+button { background:var(--brand); color:#fff; border-color:var(--brand); cursor:pointer; } button.danger { background:transparent; color:var(--bad); border-color:var(--bad); } button:disabled { opacity:.5; cursor:not-allowed; }
+.tag { display:inline-block; padding:1px 8px; border-radius:99px; font-size:.8rem; border:1px solid var(--line); }
+.tag.ok { color:var(--ok); border-color:var(--ok); } .tag.bad { color:var(--bad); border-color:var(--bad); }
+.inline { display:flex; gap:8px; align-items:center; }
